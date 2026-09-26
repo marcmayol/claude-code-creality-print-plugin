@@ -11,14 +11,23 @@ de la impresora y hablan con la K2 igual que Creality Print (Moonraker + websock
 
 ## Antes de empezar
 
-- Llama a `mis_notas`: son las reglas de esta persona y de su impresora (temperaturas de sus
-  filamentos, brim, ranuras…). Aplícalas y mandan sobre los consejos generales de abajo.
+- Llama a `ver_preconfiguracion` con la ruta del modelo. Junta los `CREALITY.md` que
+  aplican (como un AGENTS.md para imprimir): el global de la persona y los de la carpeta
+  del modelo y las de encima, y manda el más cercano.
+  - `valores` (perfiles, ajustes, carpeta de salida) los aplica `laminar` solo; no hace falta
+    repetirlos. Lo que pida en la conversación manda sobre ellos.
+  - `ranuras` son las que hay que **proponer** al imprimir; igualmente se pregunta.
+  - `reglas` es texto libre suyo, con sus notas: léelo y síguelo. Manda sobre los consejos
+    generales de abajo.
 - Si dice algo que vale para siempre ("mi PETG va a 245", "pon siempre brim"), ofrece
-  guardarlo con `guardar_nota`. No guardes nada que no haya confirmado.
+  guardarlo: `guardar_nota` si es una regla, `guardar_preconfiguracion(ambito="global")` si
+  es un perfil o ajuste. Si vale para una carpeta o proyecto, `ambito="proyecto"`. No
+  guardes nada que no haya confirmado.
 - Si la impresora no aparece (primera vez, o ha cambiado de IP), `configurar_impresora`
   la busca en Creality Print y en la red local y la guarda.
 
-Todo esto vive en la configuración del plugin en su PC, fuera del repositorio.
+Todo esto vive en su PC (los `CREALITY.md` y `%APPDATA%\creality-print-plugin\`), nunca en
+el repositorio del plugin.
 
 ## Flujo normal
 

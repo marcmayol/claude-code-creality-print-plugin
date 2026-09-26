@@ -13,21 +13,12 @@ def config_temporal(tmp_path, monkeypatch):
 
 def test_sin_configuracion_no_falla():
     assert config.leer() == {}
-    assert config.notas() == []
     assert config.impresora_guardada() is None
 
 
-def test_notas_se_guardan_sin_duplicados_y_se_borran():
-    config.anadir_nota("Mi ABS High Speed va a 270 °C")
-    config.anadir_nota("mi abs high speed va a 270 °c")
-    config.anadir_nota("Brim de 5 mm en piezas altas")
-    assert [n["texto"] for n in config.notas()] == ["Mi ABS High Speed va a 270 °C", "Brim de 5 mm en piezas altas"]
-    config.quitar_nota(1)
-    assert [n["texto"] for n in config.notas()] == ["Brim de 5 mm en piezas altas"]
-    with pytest.raises(ValueError):
-        config.quitar_nota(5)
-    with pytest.raises(ValueError):
-        config.anadir_nota("   ")
+def test_guardar_impresora():
+    config.guardar_impresora("10.0.0.9", "F021", "mi-k2")
+    assert config.impresora_guardada() == ("10.0.0.9", "F021")
 
 
 def test_impresora_guardada_manda_sobre_creality_print(monkeypatch):

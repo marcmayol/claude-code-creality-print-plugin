@@ -5,6 +5,7 @@
 #     "httpx>=0.27",
 #     "websockets>=13",
 #     "pillow>=10",
+#     "pyyaml>=6",
 # ]
 # ///
 """Servidor MCP: Creality Print + Creality K2 para Claude Code.
@@ -33,6 +34,7 @@ import config
 import creality_print as cpm
 import gcode
 import k2 as k2m
+import preconfig
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -122,25 +124,110 @@ def configurar_impresora(host: str | None = None) -> dict:
 
 
 @mcp.tool()
+def ver_preconfiguracion(modelo_o_carpeta: str | None = None) -> dict:
+    """Lo que hay que usar según los CREALITY.md (como un AGENTS.md para imprimir).
+
+    Combina el global (vale siempre) y los del proyecto: el de la carpeta del modelo y los
+    de las carpetas de encima; manda el más cercano. `valores` es lo que `laminar` aplica
+    solo (perfiles, ajustes, carpeta de salida, ranuras a proponer); `reglas` es texto
+    libre de la persona que hay que leer y seguir, incluidas sus notas. Llámalo antes de
+    laminar o imprimir, con la ruta del modelo si la hay.
+    """
+    try:
+        r = preconfig.resolver(modelo_o_carpeta)
+    except preconfig.ErrorPreconfig as e:
+        return _error(e)
+    r["global"] = str(preconfig.ruta_global())
+    if not r["archivos"]:
+        r["pista"] = ("No hay ningún CREALITY.md. Se crean con guardar_preconfiguracion "
+                      "(ambito 'global' o 'proyecto') o a mano; ver el README.")
+    return r
+
+
+@mcp.tool()
+def guardar_preconfiguracion(
+    ambito: str,
+    carpeta: str | None = None,
+    maquina: str | None = None,
+    proceso: str | None = None,
+    filamentos: list[str] | None = None,
+    ajustes: dict | None = None,
+    carpeta_salida: str | None = None,
+    ranuras: dict[str, str] | None = None,
+    quitar: list[str] | None = None,
+) -> dict:
+    """Crea o cambia un CREALITY.md con los perfiles y ajustes a usar. Solo si la persona lo pide.
+
+    ambito: "global" (vale siempre) o "proyecto" (vale para `carpeta` y lo que haya dentro;
+    `carpeta` obligatoria). Solo cambia lo que se pasa; el texto libre del archivo no se toca.
+    quitar: claves a borrar, p. ej. ["proceso", "ajustes.brim_type"]. Comprueba que los
+    perfiles existen y que los ajustes son claves reales antes de guardar.
+    """
+    if ambito == "global":
+        ruta = preconfig.ruta_global()
+    elif ambito == "proyecto":
+        if not carpeta or not Path(carpeta).is_dir():
+            return {"error": "Para ambito 'proyecto' hace falta `carpeta`, una carpeta que exista."}
+        ruta = Path(carpeta).resolve() / preconfig.NOMBRE
+    else:
+        return {"error": "ambito debe ser 'global' o 'proyecto'."}
+    cambios = {k: v for k, v in {"maquina": maquina, "proceso": proceso, "filamentos": filamentos,
+                                  "ajustes": ajustes, "carpeta_salida": carpeta_salida,
+                                  "ranuras": ranuras}.items() if v is not None}
+    try:
+        _validar_perfiles(cambios, ruta)
+        datos = preconfig.actualizar(ruta, cambios, quitar)
+    except (preconfig.ErrorPreconfig, cpm.ErrorCrealityPrint, k2m.ErrorImpresora) as e:
+        return _error(e)
+    return {"archivo": str(ruta), "valores": datos}
+
+
+def _validar_perfiles(cambios: dict, ruta: Path) -> None:
+    """Perfiles que existen, de la impresora real, y ajustes que son claves de verdad."""
+    efectivos = {**preconfig.resolver(ruta.parent)["valores"], **cambios}
+    activos = cp().perfiles_activos
+    maquina = efectivos.get("maquina") or activos["machine"]
+    for tipo, nombre in (("machine", cambios.get("maquina")), ("process", cambios.get("proceso"))):
+        if nombre:
+            cp().resolver_perfil(tipo, nombre)
+    for f in cambios.get("filamentos") or []:
+        cp().resolver_perfil("filament", f)
+    if cambios.get("maquina"):
+        destino = maquina_destino()
+        modelo = cp().resolver_perfil("machine", maquina).get("printer_model")
+        if destino and modelo and modelo != destino[0]:
+            raise cpm.ErrorCrealityPrint(f"«{maquina}» es de una «{modelo}» y la impresora es una «{destino[0]}».")
+    for r in (cambios.get("ranuras") or {}).values():
+        k2m.ranura_a_indices(str(r))
+    if cambios.get("ajustes"):
+        planos = {
+            "machine": [cp().resolver_perfil("machine", maquina)],
+            "process": [cp().resolver_perfil("process", efectivos.get("proceso") or activos["process"])],
+            "filament": [cp().resolver_perfil("filament", f)
+                         for f in (efectivos.get("filamentos") or activos["filaments"][:1])],
+        }
+        cpm.aplicar_ajustes(planos, cambios["ajustes"])
+
+
+@mcp.tool()
 def mis_notas() -> dict:
-    """Las reglas y preferencias que la persona ha pedido recordar (temperaturas de sus filamentos,
-    que siempre quiere brim, qué ranura usa para qué…). Léelas antes de laminar o imprimir y
-    aplícalas. También dice qué impresora hay guardada."""
-    datos = config.leer()
+    """Las notas de la persona (reglas que vale siempre recordar) y la impresora guardada.
+    Viven en la sección «## Notas» del CREALITY.md global. ver_preconfiguracion ya las incluye."""
     return {
-        "impresora": datos.get("impresora"),
-        "notas": [{"numero": i + 1, **n} for i, n in enumerate(datos.get("notas", []))],
-        "configuracion": str(config.ruta()),
+        "impresora": config.leer().get("impresora"),
+        "notas": [{"numero": i + 1, "texto": n} for i, n in enumerate(preconfig.notas())],
+        "archivo": str(preconfig.ruta_global()),
     }
 
 
 @mcp.tool()
 def guardar_nota(texto: str) -> dict:
-    """Guarda una regla o preferencia duradera de la persona, p. ej. "Mi ABS High Speed va a 270 °C"
-    o "En piezas de más de 100 mm, brim de 5 mm". Solo cuando lo pida o lo confirme."""
+    """Guarda una regla o preferencia duradera, p. ej. "Mi ABS High Speed va a 270 °C" o
+    "En piezas de más de 100 mm, brim de 5 mm". Va al CREALITY.md global. Solo si lo pide o
+    lo confirma."""
     try:
-        return {"notas": [{"numero": i + 1, **n} for i, n in enumerate(config.anadir_nota(texto))]}
-    except ValueError as e:
+        return {"notas": [{"numero": i + 1, "texto": n} for i, n in enumerate(preconfig.anadir_nota(texto))]}
+    except preconfig.ErrorPreconfig as e:
         return _error(e)
 
 
@@ -148,8 +235,8 @@ def guardar_nota(texto: str) -> dict:
 def borrar_nota(numero: int) -> dict:
     """Borra la nota con ese número (el que da mis_notas)."""
     try:
-        return {"notas": [{"numero": i + 1, **n} for i, n in enumerate(config.quitar_nota(numero))]}
-    except ValueError as e:
+        return {"notas": [{"numero": i + 1, "texto": n} for i, n in enumerate(preconfig.quitar_nota(numero))]}
+    except preconfig.ErrorPreconfig as e:
         return _error(e)
 
 
@@ -165,7 +252,7 @@ def creality_print_info() -> dict:
         return _error(e)
     destino = maquina_destino()
     info["impresora_destino"] = {"modelo": destino[0], "cama_mm": destino[1]} if destino else None
-    info["notas_guardadas"] = len(config.notas())
+    info["notas_guardadas"] = len(preconfig.notas())
     return info
 
 
@@ -213,7 +300,9 @@ async def laminar(
 ) -> dict:
     """Lamina un STL, 3MF, OBJ o STEP con Creality Print (su propio motor, no Orca) y revisa el gcode.
 
-    - Sin perfiles usa los que están seleccionados ahora en la ventana de Creality Print.
+    - Sin perfiles usa los del CREALITY.md que aplique al modelo (ver_preconfiguracion) y, si
+      no hay, los que están seleccionados ahora en la ventana de Creality Print. Lo que se pase
+      aquí manda sobre el CREALITY.md; los `ajustes` se suman a los suyos.
     - filamentos: uno por extrusor del modelo (T0, T1…). En un 3MF multicolor, en el
       orden de sus filamentos.
     - ajustes: claves del perfil a cambiar, p. ej. {"sparse_infill_density": "20%",
@@ -228,12 +317,25 @@ async def laminar(
     Creality Print, y lleva miniaturas para la pantalla de la impresora.
     """
     destino = maquina_destino()
+    try:
+        pre = preconfig.resolver(modelo)
+    except preconfig.ErrorPreconfig as e:
+        return _error(e)
+    v = pre["valores"]
+    if usar_perfiles_del_3mf:
+        v = {k: x for k, x in v.items() if k in ("carpeta_salida", "ranuras")}
+    maquina = maquina or v.get("maquina")
+    proceso = proceso or v.get("proceso")
+    filamentos = filamentos or v.get("filamentos")
+    carpeta_salida = carpeta_salida or v.get("carpeta_salida")
+    ajustes_finales = {**v.get("ajustes", {}), **(ajustes or {})} or None
 
     def trabajo():
         return cpm.laminar(
             cp(), modelo, maquina=maquina, proceso=proceso, filamentos=filamentos, salida=carpeta_salida,
-            ajustes=ajustes, usar_perfiles_del_3mf=usar_perfiles_del_3mf, colocar=colocar, orientar=orientar,
-            modelo_esperado=destino[0] if destino else None, cama=destino[1] if destino else None,
+            ajustes=ajustes_finales, usar_perfiles_del_3mf=usar_perfiles_del_3mf, colocar=colocar,
+            orientar=orientar, modelo_esperado=destino[0] if destino else None,
+            cama=destino[1] if destino else None,
         )
 
     try:
@@ -247,6 +349,8 @@ async def laminar(
         "avisos": res.avisos,
         "segundos": res.segundos,
         "impresora_destino": destino[0] if destino else None,
+        "preconfiguracion": {"archivos": pre["archivos"], "ranuras_propuestas": v.get("ranuras"),
+                             "reglas": pre["reglas"]} if pre["archivos"] else None,
     }
 
 

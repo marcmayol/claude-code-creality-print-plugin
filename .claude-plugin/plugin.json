@@ -1,6 +1,6 @@
 {
   "name": "creality-print",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Laminar con Creality Print por CLI, revisar gcode contra la cama real y manejar la Creality K2 (estado, CFS, subir, imprimir con ranuras) desde Claude Code.",
   "author": {
     "name": "Marc Mayol",

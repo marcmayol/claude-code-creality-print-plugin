@@ -30,7 +30,8 @@ Laminar con **Creality Print** y manejar una **Creality K2** desde
 | Herramienta | Qué hace | ¿Mueve la impresora? |
 |---|---|---|
 | `configurar_impresora` | Busca la impresora (Creality Print o red local) y la guarda | no |
-| `mis_notas`, `guardar_nota`, `borrar_nota` | Tus reglas y preferencias, guardadas en tu PC | no |
+| `ver_preconfiguracion`, `guardar_preconfiguracion` | Los `CREALITY.md` que aplican a un modelo; crearlos o cambiarlos | no |
+| `mis_notas`, `guardar_nota`, `borrar_nota` | Tus reglas, en el `CREALITY.md` global | no |
 | `creality_print_info` | Instalación, versión, perfiles seleccionados, impresora de destino | no |
 | `listar_perfiles` | Perfiles de máquina, proceso o filamento (solo los de tu máquina) | no |
 | `ver_ajustes_perfil` | Claves y valores de un perfil ya resuelto | no |
@@ -64,16 +65,45 @@ impresora?», «¿qué hay en el CFS?».
 
 ### Tus datos
 
-El plugin no lleva nada tuyo dentro: lo que necesita lo averigua y lo guarda en tu PC, en
-`%APPDATA%\creality-print-plugin\config.json`.
+El plugin no lleva nada tuyo dentro: lo que necesita lo averigua y lo guarda en tu PC.
 
 - **La impresora.** La primera vez, `configurar_impresora` prueba las que tiene Creality
   Print y, si no responde ninguna, escanea tu red local (puertos 9999 y 7125). Guarda su IP
-  y su modelo, que es lo que se usa para comprobar la cama. Si un día cambia de IP, se
-  vuelve a llamar.
-- **Tus reglas.** Lo que le digas que recuerde («mi ABS va a 270 °C», «brim siempre en piezas
-  altas») se guarda con `guardar_nota`. Claude lo lee con `mis_notas` antes de laminar o
-  imprimir, y `borrar_nota` lo quita.
+  y su modelo en `%APPDATA%\creality-print-plugin\config.json`; el modelo es lo que se usa
+  para comprobar la cama. Si un día cambia de IP, se vuelve a llamar.
+- **Tus perfiles y reglas, en `CREALITY.md`** (ver abajo).
+
+### CREALITY.md: preconfiguración, como un AGENTS.md
+
+Un `CREALITY.md` le dice al plugin qué usar sin tener que repetirlo cada vez. Arriba, entre
+`---`, lo que se aplica solo al laminar; debajo, reglas en texto libre que Claude lee y sigue.
+Hay una plantilla comentada en [`CREALITY.ejemplo.md`](CREALITY.ejemplo.md).
+
+```markdown
+---
+proceso: 0.16mm Standard @Creality K2 0.4 nozzle
+filamentos: [Hyper PLA @Creality K2 0.4 nozzle]
+ajustes:
+  wall_loops: 4
+  brim_type: outer_only
+carpeta_salida: gcode
+ranuras: {"1": 1D}
+---
+# Soportes para la pared
+Todo en PLA negro. Las piezas de exterior, con 4 paredes.
+```
+
+- **Global**, en `%APPDATA%\creality-print-plugin\CREALITY.md`: vale siempre. Su sección
+  `## Notas` la rellena `guardar_nota` («mi ABS va a 270 °C», «brim en piezas altas»).
+- **De proyecto**, en la carpeta de los modelos o en cualquiera de las de encima: vale para lo
+  que haya dentro.
+- Manda el más cercano al modelo, y lo que pidas en la conversación manda sobre todos. Los
+  `ajustes` se suman de un nivel a otro.
+- Claves: `maquina`, `proceso`, `filamentos`, `ajustes`, `carpeta_salida` (relativa al
+  archivo) y `ranuras` (las que Claude propondrá al imprimir; igualmente te pregunta).
+- Se puede editar a mano o pedírselo a Claude («para esta carpeta usa 0,16 mm y brim»), que usa
+  `guardar_preconfiguracion` y comprueba antes que los perfiles existen, que son de tu
+  impresora y que los ajustes son claves reales.
 
 Variables opcionales, por si prefieres fijarlo a mano:
 
@@ -95,8 +125,8 @@ Variables opcionales, por si prefieres fijarlo a mano:
   arranque (Y −1) y la rampa de desecho del cambio de color (Y 291,5) son de la máquina.
 - `k2.py`: Moonraker (7125) para leer y subir; websocket 9999 para lanzar y controlar, con
   los mismos mensajes que `resources/web/deviceMgr` de Creality Print.
-- `config.py`: tu configuración (impresora y notas), fuera del repo; incluye la búsqueda en
-  la red local.
+- `config.py`: la impresora guardada, fuera del repo; incluye la búsqueda en la red local.
+- `preconfig.py`: los `CREALITY.md` (global y de proyecto), su combinación y las notas.
 - `server.py`: el servidor MCP (FastMCP, stdio).
 
 ## Tests

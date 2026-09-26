@@ -1,8 +1,8 @@
-"""Lo personal de cada instalación: qué impresora es y qué reglas tiene su dueño.
+"""Lo personal de cada instalación: qué impresora es.
 
 Vive fuera del repo, en %APPDATA%\\creality-print-plugin\\config.json (o donde diga
-CREALITY_PLUGIN_CONFIG), y lo rellena el propio plugin: busca la impresora y guarda las
-notas que la persona le va dictando. Nada de esto se publica.
+CREALITY_PLUGIN_CONFIG), y lo rellena el propio plugin buscando la impresora. Las reglas
+y preferencias van aparte, en los CREALITY.md (ver preconfig.py). Nada de esto se publica.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import ipaddress
 import json
 import os
 import socket
-from datetime import date
 from pathlib import Path
 
 import httpx
@@ -124,31 +123,3 @@ def buscar_impresoras() -> list[dict]:
             r["origen"] = "red local"
             vistos[ip] = r
     return list(vistos.values())
-
-
-# ---------------------------------------------------------------- notas
-
-def notas() -> list[dict]:
-    return leer().get("notas", [])
-
-
-def anadir_nota(texto: str) -> list[dict]:
-    texto = texto.strip()
-    if not texto:
-        raise ValueError("La nota está vacía.")
-    datos = leer()
-    lista = datos.setdefault("notas", [])
-    if not any(n["texto"].lower() == texto.lower() for n in lista):
-        lista.append({"texto": texto, "fecha": date.today().isoformat()})
-    guardar(datos)
-    return lista
-
-
-def quitar_nota(numero: int) -> list[dict]:
-    datos = leer()
-    lista = datos.get("notas", [])
-    if not 1 <= numero <= len(lista):
-        raise ValueError(f"No hay nota {numero}; hay {len(lista)}.")
-    lista.pop(numero - 1)
-    guardar(datos)
-    return lista
