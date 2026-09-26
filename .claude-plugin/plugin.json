@@ -1,0 +1,20 @@
+{
+  "name": "creality-print",
+  "version": "0.1.0",
+  "description": "Laminar con Creality Print por CLI, revisar gcode contra la cama real y manejar la Creality K2 (estado, CFS, subir, imprimir con ranuras) desde Claude Code.",
+  "author": {
+    "name": "Marc Mayol",
+    "url": "https://github.com/marcmayol"
+  },
+  "keywords": [
+    "3d-printing",
+    "creality",
+    "k2",
+    "slicer",
+    "klipper",
+    "moonraker"
+  ],
+  "homepage": "https://github.com/marcmayol/creality-print-plugin",
+  "repository": "https://github.com/marcmayol/creality-print-plugin",
+  "license": "MIT"
+}
