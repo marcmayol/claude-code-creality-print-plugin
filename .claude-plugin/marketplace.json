@@ -1,12 +1,14 @@
 {
   "name": "marc-3d",
   "description": "Plugins de impresión 3D de Marc",
-  "owner": { "name": "Marc Mayol" },
+  "owner": {
+    "name": "Marc Mayol"
+  },
   "plugins": [
     {
       "name": "creality-print",
       "source": "./",
-      "description": "Creality Print + Creality K2 desde Claude Code"
+      "description": "Creality Print + impresoras Creality (K2, K1…) desde Claude Code"
     }
   ]
 }

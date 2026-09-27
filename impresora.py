@@ -1,11 +1,14 @@
-"""La impresora: Moonraker (7125) para leer y subir, y el websocket de Creality (9999)
-para lanzar trabajos con el CFS, igual que hace Creality Print.
+"""La impresora Creality: Moonraker (7125) para leer y subir, y el websocket de
+Creality OS (9999) para lanzar trabajos, igual que hace Creality Print.
+
+Vale para las Creality con Creality OS (Klipper + Moonraker + el servicio del 9999):
+la familia K2 y la K1, entre otras. Probado en una K2 con CFS.
 
 Por qué el websocket y no `POST /printer/print/start` de Moonraker: al lanzar por
-Moonraker la K2 reutiliza el mapeo de ranuras del trabajo anterior (o pide la
-ranura A), y ese mapeo no se puede cambiar desde la API de Moonraker. Creality
-Print lo resuelve mandando por el 9999 primero `colorMatch` (qué extrusor del
-gcode sale de qué ranura) y después `multiColorPrint`. Este módulo hace lo mismo.
+Moonraker, una K2 con CFS reutiliza el mapeo de ranuras del trabajo anterior (o pide la
+ranura A), y ese mapeo no se puede cambiar desde la API de Moonraker. Creality Print lo
+resuelve mandando por el 9999 primero `colorMatch` (qué extrusor del gcode sale de qué
+ranura) y después `multiColorPrint`; sin CFS, `opGcodeFile`. Este módulo hace lo mismo.
 Sacado de resources/web/deviceMgr de Creality Print 7.2.2 (DeviceInterface).
 """
 from __future__ import annotations
@@ -22,14 +25,55 @@ from websockets.sync.client import connect as ws_connect
 
 PUERTO_MOONRAKER = 7125
 PUERTO_WS = 9999
-DIR_GCODES = "/mnt/UDISK/printer_data/gcodes"
+# Si Moonraker no dice dónde guarda los gcode (/server/files/roots), el de la K2.
+DIR_GCODES_POR_DEFECTO = "/mnt/UDISK/printer_data/gcodes"
 
-# Códigos de modelo de Creality (system/Creality/machineList.json).
-MODELOS = {
+# Por si Creality Print no está: los modelos más comunes con Creality OS.
+_MODELOS_BASE = {
     "F021": ("Creality K2", (260, 260, 260)),
     "F012": ("Creality K2 Pro", (300, 300, 300)),
     "F008": ("Creality K2 Plus", (350, 350, 350)),
+    "F016": ("Creality K2 SE", (220, 215, 245)),
+    "CR-K1": ("Creality K1", (220, 220, 250)),
+    "CR-K1 Max": ("Creality K1 Max", (300, 300, 300)),
+    "K1C": ("Creality K1C", (220, 220, 250)),
 }
+
+
+def _cargar_modelos() -> dict[str, tuple[str, tuple[int, int, int]]]:
+    """Código que manda la impresora -> (printer_model de los perfiles, cama).
+
+    Sale de la lista de impresoras de Creality Print (system/Creality/machineList.json),
+    que conoce todas las suyas. El código es el que la impresora da por el websocket
+    ("model": "F021" en una K2) y el que Creality Print guarda en deviceInfo.json.
+    """
+    modelos = dict(_MODELOS_BASE)
+    base = Path(os.environ.get("APPDATA", "")) / "Creality" / "Creality Print"
+    for lista in sorted(base.glob("*/system/Creality/machineList.json"), reverse=True):
+        try:
+            impresoras = json.loads(lista.read_text(encoding="utf-8"))["printerList"]
+        except (OSError, ValueError, KeyError):
+            continue
+        conocidos = set()
+        for f in (lista.parent / "machine").glob("*.json"):
+            try:
+                m = json.loads(f.read_text(encoding="utf-8")).get("printer_model")
+            except (OSError, ValueError):
+                continue
+            if m:
+                conocidos.add(m)
+        for p in impresoras:
+            codigo, nombre = p.get("printerIntName"), p.get("name", "")
+            if not codigo or codigo in modelos or not p.get("xSize"):
+                continue
+            opciones = [f"Creality {nombre}", f"Creality {nombre.split('_')[0]}", nombre]
+            printer_model = next((o for o in opciones if o in conocidos), opciones[0])
+            modelos[codigo] = (printer_model, (int(p["xSize"]), int(p["ySize"]), int(p.get("zSize") or 0)))
+        break
+    return modelos
+
+
+MODELOS = _cargar_modelos()
 
 # Estados de print_stats en los que la impresora está libre.
 LIBRE = {"standby", "complete", "cancelled", "error"}
@@ -75,20 +119,22 @@ def id_extrusor(extrusor: int) -> str:
 
 
 @dataclass
-class K2:
+class Impresora:
     host: str
     modelo_codigo: str = ""
+    _dir_gcodes: str | None = None
 
     @classmethod
-    def detectar(cls) -> "K2":
+    def detectar(cls) -> "Impresora":
         """Dónde está la impresora, por este orden:
 
-        1. La variable K2_HOST.
+        1. La variable CREALITY_HOST (o K2_HOST, el nombre antiguo).
         2. La que guardó `configurar_impresora` en la configuración del plugin.
         3. Las que tiene guardadas Creality Print.
         """
-        if os.environ.get("K2_HOST"):
-            return cls(os.environ["K2_HOST"], os.environ.get("K2_MODELO", ""))
+        host = os.environ.get("CREALITY_HOST") or os.environ.get("K2_HOST")
+        if host:
+            return cls(host, os.environ.get("CREALITY_MODELO") or os.environ.get("K2_MODELO", ""))
         import config  # aquí para no importar en círculo
 
         candidatos = []
@@ -105,7 +151,7 @@ class K2:
         probadas = f" (probado: {', '.join(h for h, _ in candidatos)})" if candidatos else ""
         raise ErrorImpresora(
             f"No encuentro la impresora{probadas}. Usa configurar_impresora para buscarla en la red "
-            "(puede haber cambiado de IP) o define K2_HOST."
+            "(puede haber cambiado de IP) o define CREALITY_HOST."
         )
 
     # ------------------------------------------------------------ Moonraker
@@ -130,6 +176,17 @@ class K2:
         except httpx.HTTPError as e:
             raise ErrorImpresora(f"Moonraker no responde en {self.host}: {e}") from e
         return r.json()["result"]["status"]
+
+    @property
+    def dir_gcodes(self) -> str:
+        """Dónde guarda la impresora los gcode (en la K2 /mnt/UDISK/…, en la K1 /usr/data/…)."""
+        if self._dir_gcodes is None:
+            try:
+                raices = self._get("/server/files/roots")
+                self._dir_gcodes = next(r["path"] for r in raices if r.get("name") == "gcodes")
+            except (ErrorImpresora, StopIteration, KeyError, TypeError):
+                self._dir_gcodes = DIR_GCODES_POR_DEFECTO
+        return self._dir_gcodes.rstrip("/")
 
     @property
     def modelo(self) -> tuple[str, tuple[int, int, int]] | None:
@@ -215,7 +272,7 @@ class K2:
                 r.raise_for_status()
             except httpx.HTTPError as e:
                 raise ErrorImpresora(f"No se ha podido subir: {e}") from e
-        return {"nombre": nombre, "ruta_impresora": f"{DIR_GCODES}/{nombre}",
+        return {"nombre": nombre, "ruta_impresora": f"{self.dir_gcodes}/{nombre}",
                 "mb": round(local.stat().st_size / 1e6, 2)}
 
     # ------------------------------------------------------------ websocket 9999
@@ -294,7 +351,7 @@ class K2:
         `ranuras` = {extrusor del gcode (1-based): "1A".."1D"}. Con ranuras se manda
         colorMatch + multiColorPrint; sin ellas, opGcodeFile (portabobinas externo).
         """
-        ruta = f"{DIR_GCODES}/{nombre}"
+        ruta = f"{self.dir_gcodes}/{nombre}"
         mensajes = []
         mapeo = []
         if ranuras:

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import httpx
 
-import k2 as k2m
+import impresora as imp
 
 
 def ruta() -> Path:
@@ -56,16 +56,16 @@ def guardar_impresora(host: str, modelo_codigo: str, nombre: str = "") -> dict:
 def identificar(host: str) -> dict | None:
     """¿Hay una Creality con Moonraker y el websocket 9999 en `host`? Devuelve qué es."""
     try:
-        info = httpx.get(f"http://{host}:{k2m.PUERTO_MOONRAKER}/printer/info", timeout=2).json()["result"]
+        info = httpx.get(f"http://{host}:{imp.PUERTO_MOONRAKER}/printer/info", timeout=2).json()["result"]
     except (httpx.HTTPError, ValueError, KeyError):
         return None
-    impresora = k2m.K2(host)
+    impresora = imp.Impresora(host)
     try:
         ws = impresora.estado_ws()
-    except k2m.ErrorImpresora:
+    except imp.ErrorImpresora:
         ws = {}
     codigo = ws.get("model") or ""
-    modelo = k2m.MODELOS.get(codigo)
+    modelo = imp.MODELOS.get(codigo)
     return {
         "host": host,
         "nombre": info.get("hostname") or ws.get("hostname") or "",
@@ -106,7 +106,7 @@ def _puerto_abierto(ip: str, puerto: int) -> bool:
 def buscar_impresoras() -> list[dict]:
     """Las de Creality Print primero; si no hay ninguna viva, escanea la red local (/24)."""
     vistos: dict[str, dict] = {}
-    for host, _ in k2m._hosts_de_creality_print():
+    for host, _ in imp._hosts_de_creality_print():
         r = identificar(host)
         if r:
             r["origen"] = "Creality Print"
@@ -115,7 +115,7 @@ def buscar_impresoras() -> list[dict]:
         return list(vistos.values())
     candidatos = [str(ip) for red in _redes_locales() for ip in red.hosts()]
     with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
-        abiertos = [ip for ip, ok in zip(candidatos, ex.map(lambda i: _puerto_abierto(i, k2m.PUERTO_WS), candidatos))
+        abiertos = [ip for ip, ok in zip(candidatos, ex.map(lambda i: _puerto_abierto(i, imp.PUERTO_WS), candidatos))
                     if ok]
     for ip in abiertos:
         r = identificar(ip)

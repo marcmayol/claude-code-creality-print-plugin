@@ -301,6 +301,14 @@ def info_3mf(ruta: Path) -> dict:
             m = re.search(rb'name="Application">([^<]*)<', z.read("3D/3dmodel.model")[:20000])
             aplicacion = m.group(1).decode("utf-8", "replace") if m else ""
     filamentos = ajustes.get("filament_settings_id") or []
+    if not filamentos:
+        # 3MF sin datos de proyecto (p. ej. los que prepara preparar_multicolor): cuántos
+        # extrusores piden sus objetos y sus cambios por altura.
+        with zipfile.ZipFile(ruta) as z:
+            textos = [z.read(n).decode("utf-8", "replace") for n in
+                      ("Metadata/model_settings.config", "Metadata/custom_gcode_per_layer.xml") if n in nombres]
+        usados = [int(v) for t in textos for v in re.findall(r'(?:key="extruder" value|extruder)="(\d+)"', t)]
+        filamentos = [""] * max(usados, default=1)
     return {
         "aplicacion": aplicacion,
         "maquina": ajustes.get("printer_settings_id"),
@@ -391,6 +399,183 @@ def preparar_3mf_plano(ruta: Path, destino: Path, cama: tuple[float, float]) -> 
         "colores": colores,
         "materiales": [materiales[p][0] for p in usados if p < len(materiales)],
     }
+
+
+# ---------------------------------------------------------------- multicolor
+
+def stl_a_3mf(stl: Path, destino: Path) -> Path:
+    """Un STL (binario o ASCII) como 3MF plano de un objeto, para poder darle colores."""
+    import struct
+
+    datos = stl.read_bytes()
+    triangulos: list[tuple[tuple[float, float, float], ...]] = []
+    es_binario = len(datos) >= 84 and 84 + 50 * struct.unpack_from("<I", datos, 80)[0] == len(datos)
+    if es_binario:
+        n = struct.unpack_from("<I", datos, 80)[0]
+        for i in range(n):
+            v = struct.unpack_from("<12f", datos, 84 + 50 * i)
+            triangulos.append((v[3:6], v[6:9], v[9:12]))
+    else:
+        verts = [tuple(float(x) for x in m) for m in
+                 re.findall(rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)", datos)]
+        triangulos = [tuple(verts[i:i + 3]) for i in range(0, len(verts) - 2, 3)]
+    if not triangulos:
+        raise ErrorCrealityPrint(f"{stl.name} no tiene triángulos: ¿es un STL?")
+    indice: dict[tuple, int] = {}
+    caras = []
+    for t in triangulos:
+        caras.append(tuple(indice.setdefault(tuple(round(c, 5) for c in p), len(indice)) for p in t))
+    vertices = "".join(f'<vertex x="{x:.5f}" y="{y:.5f}" z="{z:.5f}"/>' for x, y, z in indice)
+    tris = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in caras if len({a, b, c}) == 3)
+    nombre = re.sub(r'[<>&"]', "_", stl.stem)
+    modelo = (
+        '<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" '
+        'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>'
+        f'<object id="1" name="{nombre}" type="model"><mesh><vertices>{vertices}</vertices>'
+        f'<triangles>{tris}</triangles></mesh></object></resources>'
+        '<build><item objectid="1"/></build></model>'
+    )
+    with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("3D/3dmodel.model", modelo)
+        z.writestr("_rels/.rels", _RELS)
+        z.writestr("[Content_Types].xml", _CONTENT_TYPES)
+    return destino
+
+
+def objetos_3mf(ruta: Path) -> list[dict]:
+    """Los objetos de un 3MF (los que se colocan en la cama) y su extrusor."""
+    with zipfile.ZipFile(ruta) as z:
+        nombres = set(z.namelist())
+        modelo = z.read("3D/3dmodel.model").decode("utf-8", "replace")
+        config = z.read("Metadata/model_settings.config").decode("utf-8", "replace") \
+            if "Metadata/model_settings.config" in nombres else ""
+    en_cama = re.findall(r'<item\s[^>]*objectid="(\d+)"', modelo)
+    materiales = re.findall(r'<base\s+name="([^"]*)"', modelo)
+    salida = []
+    for etiqueta in re.findall(r"<object\s[^>]*>", modelo):
+        a = dict(re.findall(r'(\w+)="([^"]*)"', etiqueta))
+        if a.get("id") not in en_cama:
+            continue
+        bloque = re.search(rf'<object id="{a["id"]}">(.*?)</object>', config, re.S)
+        nombre = a.get("name", "")
+        extrusor = None
+        if bloque:
+            m = re.search(r'<metadata key="name" value="([^"]*)"', bloque.group(1))
+            nombre = m.group(1) if m else nombre
+            m = re.search(r'<metadata key="extruder" value="(\d+)"', bloque.group(1))
+            extrusor = int(m.group(1)) if m else None
+        pindex = a.get("pindex")
+        salida.append({
+            "id": a["id"],
+            "nombre": nombre,
+            "extrusor": extrusor or 1,
+            "material_3mf": materiales[int(pindex)] if pindex and int(pindex) < len(materiales) else None,
+        })
+    return salida
+
+
+def _poner_extrusor(config: str, oid: str, nombre: str, extrusor: int) -> str:
+    """Fija el extrusor de un objeto (y de sus partes) en model_settings.config."""
+    patron = re.compile(rf'(<object id="{oid}">)(.*?)(</object>)', re.S)
+    m = patron.search(config)
+    if not m:
+        bloque = (f'  <object id="{oid}">\n    <metadata key="name" value="{nombre}"/>\n'
+                  f'    <metadata key="extruder" value="{extrusor}"/>\n  </object>\n')
+        return config.replace("</config>", bloque + "</config>") if "</config>" in config else \
+            f'<?xml version="1.0" encoding="UTF-8"?>\n<config>\n{bloque}</config>\n'
+    cuerpo = re.sub(r'(<metadata key="extruder" value=")\d+(")', rf"\g<1>{extrusor}\2", m.group(2))
+    cabeza = cuerpo.split("<part", 1)[0]
+    if 'key="extruder"' not in cabeza:
+        cuerpo = f'\n    <metadata key="extruder" value="{extrusor}"/>' + cuerpo
+    return config[:m.start()] + m.group(1) + cuerpo + m.group(3) + config[m.end():]
+
+
+def preparar_multicolor(
+    modelo: str | os.PathLike,
+    asignar: dict[str, int] | None = None,
+    cambios_altura: list[dict] | None = None,
+    salida: str | os.PathLike | None = None,
+    cama: tuple[float, float] = (260, 260),
+) -> dict:
+    """Prepara un 3MF con los colores que se piden, listo para `laminar`.
+
+    - asignar: {nombre o id del objeto: extrusor}. Los extrusores son 1, 2… (T0, T1…) y,
+      si se definen `mezclas` al laminar, las mezclas son los siguientes números.
+    - cambios_altura: [{"z": 10, "extrusor": 2}] cambia de filamento a esa altura (base de
+      un color y relieve de otro, como en los carteles).
+
+    Un STL se convierte antes en 3MF; un 3MF plano se centra en la cama. El original no se toca.
+    """
+    modelo = Path(modelo).resolve()
+    if not modelo.is_file():
+        raise ErrorCrealityPrint(f"No existe {modelo}.")
+    destino = Path(salida).resolve() if salida else modelo.with_name(f"{modelo.stem}_multicolor.3mf")
+    with tempfile.TemporaryDirectory() as tmp:
+        origen = modelo
+        if modelo.suffix.lower() == ".stl":
+            origen = stl_a_3mf(modelo, Path(tmp) / "desde_stl.3mf")
+        elif modelo.suffix.lower() != ".3mf":
+            raise ErrorCrealityPrint("preparar_multicolor admite STL y 3MF.")
+        centrado = Path(tmp) / "centrado.3mf"
+        if preparar_3mf_plano(origen, centrado, cama) and centrado.is_file():
+            origen = centrado
+        objetos = objetos_3mf(origen)
+        with zipfile.ZipFile(origen) as z:
+            contenido = {n: z.read(n) for n in z.namelist()}
+
+    config = contenido.get("Metadata/model_settings.config", b"").decode("utf-8")
+    if not config:
+        config = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n</config>\n'
+    for clave, extrusor in (asignar or {}).items():
+        if int(extrusor) < 1:
+            raise ErrorCrealityPrint("Los extrusores empiezan en 1.")
+        o = next((o for o in objetos if clave == o["id"] or clave.lower() == o["nombre"].lower()), None)
+        if o is None:
+            raise ErrorCrealityPrint(
+                f"No hay ningún objeto «{clave}». Objetos: " + ", ".join(f"{o['nombre']} ({o['id']})" for o in objetos))
+        config = _poner_extrusor(config, o["id"], o["nombre"], int(extrusor))
+    contenido["Metadata/model_settings.config"] = config.encode("utf-8")
+
+    if cambios_altura:
+        capas = []
+        for c in sorted(cambios_altura, key=lambda c: float(c["z"])):
+            capas.append(f'<layer top_z="{float(c["z"]):g}" type="2" extruder="{int(c["extrusor"])}" '
+                         f'color="" extra="" gcode="tool_change"/>')
+        contenido["Metadata/custom_gcode_per_layer.xml"] = (
+            '<?xml version="1.0" encoding="utf-8"?>\n<custom_gcodes_per_layer>\n<plate>\n<plate_info id="1"/>\n'
+            + "\n".join(capas) + '\n<mode value="MultiAsSingle"/>\n</plate>\n</custom_gcodes_per_layer>\n'
+        ).encode("utf-8")
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as z:
+        for n, d in contenido.items():
+            z.writestr(n, d)
+    objetos = objetos_3mf(destino)
+    usados = sorted({o["extrusor"] for o in objetos} | {int(c["extrusor"]) for c in cambios_altura or []})
+    return {"archivo": str(destino), "objetos": objetos, "cambios_altura": cambios_altura or [],
+            "extrusores_usados": usados}
+
+
+MODOS_MEZCLA = {"capas": 0, "puntos": 1, "simple": 2}
+
+
+def filas_mezcla(mezclas: list[dict], n_fisicos: int) -> str:
+    """[{"a": 1, "b": 2, "porcentaje_b": 50, "modo": "capas"}] -> mixed_filament_definitions.
+
+    Formato de MixedFilamentManager::serialize_custom_entries (Creality Print 7.2):
+    a,b,activo,custom,%B,0,g,w,m<modo>,d0,o0,u<id>. La mezcla i es el extrusor n_fisicos+i.
+    """
+    filas = []
+    for i, m in enumerate(mezclas, start=1):
+        a, b = int(m.get("a", 1)), int(m.get("b", 2))
+        if not (1 <= a <= n_fisicos and 1 <= b <= n_fisicos) or a == b:
+            raise ErrorCrealityPrint(f"Mezcla {i}: a y b deben ser dos filamentos distintos entre 1 y {n_fisicos}.")
+        modo = m.get("modo", "capas")
+        if modo not in MODOS_MEZCLA:
+            raise ErrorCrealityPrint(f"Mezcla {i}: modo «{modo}» no válido; usa {', '.join(MODOS_MEZCLA)}.")
+        pct = max(0, min(100, int(m.get("porcentaje_b", 50))))
+        filas.append(f"{a},{b},1,1,{pct},0,g,w,m{MODOS_MEZCLA[modo]},d0,o0,u{i}")
+    return ";".join(filas)
 
 
 # ---------------------------------------------------------------- miniaturas
@@ -486,6 +671,7 @@ def laminar(
     modelo_esperado: str | None = None,
     cama: tuple[float, float, float] | None = None,
     tiempo_max: int = 1800,
+    mezclas: list[dict] | None = None,
 ) -> Laminado:
     """Lamina un STL/3MF/OBJ/STEP con la CLI de Creality Print y revisa el resultado.
 
@@ -493,6 +679,9 @@ def laminar(
     Print. Con un 3MF también se imponen esos perfiles salvo que se pida
     `usar_perfiles_del_3mf`: un 3MF descargado trae la máquina de quien lo subió
     (una K1C, una K2 Pro…) y la CLI la obedece sin rechistar.
+
+    `mezclas` crea filamentos virtuales que alternan dos físicos (ver filas_mezcla): con N
+    filamentos, la mezcla 1 es el extrusor N+1. Se asignan a objetos con preparar_multicolor.
     """
     modelo = Path(modelo).resolve()
     if not modelo.is_file():
@@ -534,6 +723,11 @@ def laminar(
         proceso = proceso or activos["process"]
         n = proyecto["num_filamentos"] if proyecto else 1
         filamentos = list(filamentos or activos["filaments"][:1] or [])
+        if mezclas:
+            # Con mezclas, los extrusores por encima de los físicos son virtuales.
+            if len(filamentos) < 2:
+                raise ErrorCrealityPrint("Para mezclar hacen falta al menos dos filamentos en `filamentos`.")
+            n = len(filamentos)
         if not (maquina and proceso and filamentos):
             raise ErrorCrealityPrint("Faltan perfiles y Creality Print no tiene ninguno seleccionado.")
         if len(filamentos) < n:
@@ -561,6 +755,12 @@ def laminar(
                     p["filament_colour"] = [proyecto["colores"][i]]
         if ajustes:
             res.ajustes_aplicados = aplicar_ajustes(planos, ajustes)
+        if mezclas:
+            planos["process"][0]["mixed_filament_definitions"] = filas_mezcla(mezclas, len(filamentos))
+            res.ajustes_aplicados.append(
+                "mezclas: " + ", ".join(f"extrusor {len(filamentos) + i} = {m.get('a', 1)}+{m.get('b', 2)} "
+                                        f"({m.get('modo', 'capas')}, {m.get('porcentaje_b', 50)} % de {m.get('b', 2)})"
+                                        for i, m in enumerate(mezclas, start=1)))
         rutas = {}
         for tipo, lista in planos.items():
             rutas[tipo] = []

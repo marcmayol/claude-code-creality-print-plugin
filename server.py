@@ -8,7 +8,7 @@
 #     "pyyaml>=6",
 # ]
 # ///
-"""Servidor MCP: Creality Print + Creality K2 para Claude Code.
+"""Servidor MCP: Creality Print + impresoras Creality (K2, K1…) para Claude Code.
 
 Lamina con la CLI de Creality Print (no con Orca), revisa cada gcode antes de que
 llegue a la impresora y la maneja igual que Creality Print: Moonraker para leer y
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -33,7 +34,7 @@ from mcp.server.fastmcp import FastMCP
 import config
 import creality_print as cpm
 import gcode
-import k2 as k2m
+import impresora as imp
 import preconfig
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -41,7 +42,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 mcp = FastMCP("creality-print")
 
 _cp: cpm.CrealityPrint | None = None
-_k2: k2m.K2 | None = None
+_k2: imp.Impresora | None = None
 
 
 def cp() -> cpm.CrealityPrint:
@@ -51,10 +52,10 @@ def cp() -> cpm.CrealityPrint:
     return _cp
 
 
-def impresora() -> k2m.K2:
+def impresora() -> imp.Impresora:
     global _k2
     if _k2 is None:
-        _k2 = k2m.K2.detectar()
+        _k2 = imp.Impresora.detectar()
     return _k2
 
 
@@ -67,14 +68,14 @@ def maquina_destino() -> tuple[str, tuple[int, int, int]] | None:
         m = impresora().modelo
         if m:
             return m
-    except k2m.ErrorImpresora:
+    except imp.ErrorImpresora:
         pass
     guardada = config.impresora_guardada()
-    if guardada and guardada[1] in k2m.MODELOS:
-        return k2m.MODELOS[guardada[1]]
-    for _, codigo in k2m._hosts_de_creality_print():
-        if codigo in k2m.MODELOS:
-            return k2m.MODELOS[codigo]
+    if guardada and guardada[1] in imp.MODELOS:
+        return imp.MODELOS[guardada[1]]
+    for _, codigo in imp._hosts_de_creality_print():
+        if codigo in imp.MODELOS:
+            return imp.MODELOS[codigo]
     return None
 
 
@@ -116,7 +117,7 @@ def configurar_impresora(host: str | None = None) -> dict:
     if len(soportadas) != 1:
         return {"elegir": encontradas,
                 "motivo": "Hay varias impresoras: pregunta cuál y vuelve a llamar con su host."
-                if len(soportadas) > 1 else "Ninguna es un modelo soportado (K2, K2 Pro, K2 Plus)."}
+                if len(soportadas) > 1 else "Ninguna es un modelo que conozca Creality Print."}
     elegida = soportadas[0]
     config.guardar_impresora(elegida["host"], elegida["modelo_codigo"], elegida["nombre"])
     _k2 = None
@@ -177,7 +178,7 @@ def guardar_preconfiguracion(
     try:
         _validar_perfiles(cambios, ruta)
         datos = preconfig.actualizar(ruta, cambios, quitar)
-    except (preconfig.ErrorPreconfig, cpm.ErrorCrealityPrint, k2m.ErrorImpresora) as e:
+    except (preconfig.ErrorPreconfig, cpm.ErrorCrealityPrint, imp.ErrorImpresora) as e:
         return _error(e)
     return {"archivo": str(ruta), "valores": datos}
 
@@ -198,7 +199,7 @@ def _validar_perfiles(cambios: dict, ruta: Path) -> None:
         if destino and modelo and modelo != destino[0]:
             raise cpm.ErrorCrealityPrint(f"«{maquina}» es de una «{modelo}» y la impresora es una «{destino[0]}».")
     for r in (cambios.get("ranuras") or {}).values():
-        k2m.ranura_a_indices(str(r))
+        imp.ranura_a_indices(str(r))
     if cambios.get("ajustes"):
         planos = {
             "machine": [cp().resolver_perfil("machine", maquina)],
@@ -297,6 +298,7 @@ async def laminar(
     usar_perfiles_del_3mf: bool = False,
     colocar: bool = False,
     orientar: bool = False,
+    mezclas: list[dict] | None = None,
 ) -> dict:
     """Lamina un STL, 3MF, OBJ o STEP con Creality Print (su propio motor, no Orca) y revisa el gcode.
 
@@ -309,7 +311,11 @@ async def laminar(
       "wall_loops": 3, "brim_type": "outer_only", "enable_support": 1}. Una clave que no
       existe da error (la CLI la ignoraría en silencio).
     - Un 3MF descargado trae la máquina de quien lo hizo (K1C, K2 Pro…): por defecto se
-      imponen los perfiles de la K2. usar_perfiles_del_3mf solo si se sabe que son buenos.
+      imponen tus perfiles. usar_perfiles_del_3mf solo si se sabe que son buenos.
+    - mezclas: filamentos virtuales que alternan dos físicos, p. ej.
+      [{"a": 1, "b": 2, "porcentaje_b": 50, "modo": "capas"}] (modos: "capas", "puntos",
+      "simple"). Con N filamentos, la mezcla 1 es el extrusor N+1: asígnala a un objeto con
+      preparar_multicolor. Cada cambio purga filamento: tarda y gasta bastante más.
     - colocar/orientar: auto-colocar y auto-orientar como el botón de la ventana.
 
     Devuelve cada gcode con su revisión: `apto` false significa que NO debe imprimirse.
@@ -335,7 +341,7 @@ async def laminar(
             cp(), modelo, maquina=maquina, proceso=proceso, filamentos=filamentos, salida=carpeta_salida,
             ajustes=ajustes_finales, usar_perfiles_del_3mf=usar_perfiles_del_3mf, colocar=colocar,
             orientar=orientar, modelo_esperado=destino[0] if destino else None,
-            cama=destino[1] if destino else None,
+            cama=destino[1] if destino else None, mezclas=mezclas,
         )
 
     try:
@@ -352,6 +358,42 @@ async def laminar(
         "preconfiguracion": {"archivos": pre["archivos"], "ranuras_propuestas": v.get("ranuras"),
                              "reglas": pre["reglas"]} if pre["archivos"] else None,
     }
+
+
+@mcp.tool()
+def ver_objetos_3mf(modelo: str) -> dict:
+    """Los objetos de un 3MF (nombre, id y extrusor asignado). Sirve para saber a qué
+    objeto dar cada color con preparar_multicolor."""
+    try:
+        return {"objetos": cpm.objetos_3mf(Path(modelo))}
+    except (OSError, KeyError, zipfile.BadZipFile) as e:
+        return _error(e)
+
+
+@mcp.tool()
+def preparar_multicolor(
+    modelo: str,
+    asignar: dict[str, int] | None = None,
+    cambios_altura: list[dict] | None = None,
+    salida: str | None = None,
+) -> dict:
+    """Prepara un 3MF multicolor a partir de un STL o un 3MF, sin tocar el original.
+
+    - asignar: {nombre o id del objeto: extrusor}, p. ej. {"Texto": 2}. Extrusor 1 = primer
+      filamento (T0), 2 = segundo… Si luego se laminan `mezclas`, las mezclas son los
+      números siguientes (con 2 filamentos, la mezcla 1 es el 3).
+    - cambios_altura: [{"z": 10, "extrusor": 2}] cambia de filamento a esa altura: base de
+      un color y relieve de otro, como en los carteles y las litofanías de color.
+
+    No pinta caras sueltas: para eso, Creality Print a mano. Devuelve el 3MF nuevo; después,
+    `laminar` con un filamento por extrusor (y `mezclas` si hay extrusores virtuales).
+    """
+    destino = maquina_destino()
+    try:
+        return cpm.preparar_multicolor(modelo, asignar, cambios_altura, salida,
+                                       destino[1][:2] if destino else (260, 260))
+    except (cpm.ErrorCrealityPrint, OSError, KeyError, ValueError, zipfile.BadZipFile) as e:
+        return _error(e)
 
 
 @mcp.tool()
@@ -375,7 +417,7 @@ async def analizar_gcode(archivo: str) -> dict:
 
     try:
         return await anyio.to_thread.run_sync(trabajo)
-    except (k2m.ErrorImpresora, OSError) as e:
+    except (imp.ErrorImpresora, OSError) as e:
         return _error(e)
 
 
@@ -396,11 +438,11 @@ def abrir_en_creality_print(ruta: str, en_ventana_abierta: bool = False) -> dict
 
 @mcp.tool()
 def estado_impresora() -> dict:
-    """Estado de la K2: libre/imprimiendo, archivo, progreso, capa, tiempo restante, temperaturas
+    """Estado de la impresora: libre/imprimiendo, archivo, progreso, capa, tiempo restante, temperaturas
     y si la malla de cama está cargada. Solo lectura."""
     try:
         return impresora().estado()
-    except k2m.ErrorImpresora as e:
+    except imp.ErrorImpresora as e:
         return _error(e)
 
 
@@ -410,7 +452,7 @@ def estado_cfs() -> dict:
     está en uso, más el mapeo extrusor→ranura del último trabajo. Solo lectura."""
     try:
         c = impresora().cfs()
-    except k2m.ErrorImpresora as e:
+    except imp.ErrorImpresora as e:
         return _error(e)
     for r in c["ranuras"]:
         r.pop("_color_crudo", None)
@@ -422,7 +464,7 @@ def archivos_impresora(filtro: str = "", limite: int = 20) -> dict:
     """Gcodes guardados en la impresora, los más recientes primero. Solo lectura."""
     try:
         return {"archivos": impresora().archivos(filtro, limite)}
-    except k2m.ErrorImpresora as e:
+    except imp.ErrorImpresora as e:
         return _error(e)
 
 
@@ -432,7 +474,7 @@ def historial_impresora(limite: int = 10) -> dict:
     puede figurar como `cancelled` si el eje Y se protege al final. Solo lectura."""
     try:
         return {"trabajos": impresora().historial(limite)}
-    except k2m.ErrorImpresora as e:
+    except imp.ErrorImpresora as e:
         return _error(e)
 
 
@@ -455,7 +497,7 @@ async def subir_gcode(ruta: str, nombre: str | None = None) -> dict:
 
     try:
         return await anyio.to_thread.run_sync(trabajo)
-    except k2m.ErrorImpresora as e:
+    except imp.ErrorImpresora as e:
         return _error(e)
 
 
@@ -492,7 +534,7 @@ async def imprimir(
         est = k.estado()
         if est["klipper"] != "ready":
             return {"error": f"Klipper no está listo ({est['klipper']})."}
-        if est["estado"] not in k2m.LIBRE:
+        if est["estado"] not in imp.LIBRE:
             return {"error": f"La impresora está ocupada ({est['estado']}: {est['archivo']})."}
         ws = k.estado_ws()
         if ws.get("deviceState") not in (0, None):
@@ -521,7 +563,7 @@ async def imprimir(
                 return {"error": f"El gcode usa los extrusores {extrusores}; falta ranura para {faltan}."}
             cfs = {r["ranura"]: r for r in k.cfs()["ranuras"]}
             for e, r in mapa.items():
-                caja, mat = k2m.ranura_a_indices(r)
+                caja, mat = imp.ranura_a_indices(r)
                 ranura = cfs.get(f"{caja}{'ABCD'[mat]}")
                 if ranura is None or ranura["vacia"]:
                     return {"error": f"La ranura {r} está vacía o no existe."}
@@ -535,7 +577,7 @@ async def imprimir(
 
     try:
         return await anyio.to_thread.run_sync(trabajo)
-    except k2m.ErrorImpresora as e:
+    except imp.ErrorImpresora as e:
         return _error(e)
 
 
@@ -551,7 +593,7 @@ def controlar_impresion(accion: str, confirmacion: str = "") -> dict:
         if est["estado"] not in ("printing", "paused"):
             return {"error": f"No hay nada imprimiéndose ({est['estado']})."}
         return k.control(accion)
-    except k2m.ErrorImpresora as e:
+    except imp.ErrorImpresora as e:
         return _error(e)
 
 
