@@ -813,7 +813,10 @@ def laminar(
                 inf = gcode.analizar(g, modelo_esperado, cama)
             else:
                 res.avisos.append(f"Plate {n_placa}: couldn't render the thumbnail.")
-        tipo = (inf.lista("filament_type") or ["PLA"])[0]
+        # El material del nombre es el que usa esta placa, no el primero del proyecto.
+        tipos_proyecto = inf.lista("filament_type") or ["PLA"]
+        tipos_usados = [tipos_proyecto[t] for t in inf.herramientas if t < len(tipos_proyecto)]
+        tipo = "-".join(dict.fromkeys(tipos_usados)) or tipos_proyecto[0]
         nombre = f"{_nombre_seguro(modelo.name)}_{tipo}_{_nombre_tiempo(inf.tiempo_estimado)}"
         if len(generados) > 1:
             nombre += f"_plate{n_placa}"
