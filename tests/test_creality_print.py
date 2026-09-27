@@ -115,13 +115,13 @@ def test_resolver_perfil_hereda_todo():
 
 @instalado
 def test_perfil_inexistente_sugiere():
-    with pytest.raises(cpm.ErrorCrealityPrint, match="Querías"):
+    with pytest.raises(cpm.ErrorCrealityPrint, match="Did you mean"):
         CP.resolver_perfil("process", "0.20mm Standard @Creality K2 0.4 nozle")
 
 
 @instalado
 def test_listar_no_mezcla_k2_pro():
-    nombres = [p["nombre"] for p in CP.listar_perfiles("process", "0.20mm", MAQUINA)]
+    nombres = [p["name"] for p in CP.listar_perfiles("process", "0.20mm", MAQUINA)]
     assert PROCESO in nombres
     assert not any("K2 Pro" in n or "K2 Plus" in n for n in nombres)
 
@@ -133,11 +133,11 @@ def test_laminar_stl_con_ajustes(tmp_path):
                       modelo_esperado="Creality K2", cama=(260, 260, 260))
     assert len(res.gcodes) == 1
     g = res.gcodes[0]
-    assert g["apto"], g["problemas"]
-    assert g["impresora"] == "Creality K2"
-    assert g["miniaturas"] == ["96x96", "300x300"]
-    assert "cubo.stl_PLA_" in g["archivo"]
-    inf = gcode.analizar(g["archivo"])
+    assert g["ok_to_print"], g["problems"]
+    assert g["printer_model"] == "Creality K2"
+    assert g["thumbnails"] == ["96x96", "300x300"]
+    assert "cubo.stl_PLA_" in g["file"]
+    inf = gcode.analizar(g["file"])
     assert inf.valor("wall_loops") == "3"
     assert abs(inf.pieza.z_max - 20) < 0.5
     assert 115 < inf.pieza.x_min < inf.pieza.x_max < 145  # centrado en la cama
@@ -157,9 +157,9 @@ def test_laminar_3mf_plano_bicolor(tmp_path):
     res = cpm.laminar(CP, ruta, MAQUINA, PROCESO, [FILAMENTO, "CR-PLA @Creality K2 0.4 nozzle"],
                       modelo_esperado="Creality K2", cama=(260, 260, 260))
     g = res.gcodes[0]
-    assert g["apto"], g["problemas"]
-    assert [f["extrusor"] for f in g["filamentos"]] == [1, 2]
-    assert any("recolocado" in a for a in res.avisos)
+    assert g["ok_to_print"], g["problems"]
+    assert [f["extruder"] for f in g["filaments"]] == [1, 2]
+    assert any("centred" in a for a in res.avisos)
 
 
 @instalado

@@ -45,26 +45,23 @@ If you try another model, please open an issue and tell me how it went.
 
 | Tool | What it does | Moves the printer? |
 |---|---|---|
-| `configurar_impresora` | Finds the printer (in Creality Print or on the LAN) and saves it | no |
-| `ver_preconfiguracion`, `guardar_preconfiguracion` | The `CREALITY.md` files that apply to a model; create or change them | no |
-| `mis_notas`, `guardar_nota`, `borrar_nota` | Your rules, in the global `CREALITY.md` | no |
+| `setup_printer` | Finds the printer (in Creality Print or on the LAN) and saves it | no |
+| `get_presets`, `save_presets` | The `CREALITY.md` files that apply to a model; create or change them | no |
+| `list_notes`, `add_note`, `delete_note` | Your rules, in the global `CREALITY.md` | no |
 | `creality_print_info` | Install, version, selected profiles, target printer | no |
-| `listar_perfiles` | Machine, process or filament profiles (only those for your machine) | no |
-| `ver_ajustes_perfil` | Keys and values of a fully resolved profile | no |
-| `ver_objetos_3mf`, `preparar_multicolor` | Objects in a 3MF; colours per object and by height | no |
-| `laminar` | Slices and checks, mixed filaments included. Returns `apto` (ok to print), problems, time, grams, extruders | no |
-| `analizar_gcode` | Checks a local gcode or one stored on the printer | no |
-| `abrir_en_creality_print` | Opens a file in a Creality Print window to look at it | no |
-| `estado_impresora`, `estado_cfs`, `archivos_impresora`, `historial_impresora` | Read-only | no |
-| `subir_gcode` | Uploads a checked gcode without printing it | no |
-| `imprimir` | Starts the print with the chosen CFS slots or the external spool | **yes** (needs `confirmacion` = file name) |
-| `controlar_impresion` | Pause, resume, cancel | **yes** (cancel needs `confirmacion`) |
+| `list_profiles` | Machine, process or filament profiles (only those for your machine) | no |
+| `get_profile_settings` | Keys and values of a fully resolved profile | no |
+| `list_3mf_objects`, `prepare_multicolor` | Objects in a 3MF; colours per object and by height | no |
+| `slice` | Slices and checks, mixed filaments included. Returns `ok_to_print`, problems, time, grams, extruders | no |
+| `analyze_gcode` | Checks a local gcode or one stored on the printer | no |
+| `open_in_creality_print` | Opens a file in a Creality Print window to look at it | no |
+| `printer_status`, `cfs_status`, `printer_files`, `print_history` | Read-only | no |
+| `upload_gcode` | Uploads a checked gcode without printing it | no |
+| `start_print` | Starts the print with the chosen CFS slots or the external spool | **yes** (needs `confirm` = file name) |
+| `control_print` | Pause, resume, cancel | **yes** (cancel needs `confirm`) |
 
 The `creality-print` skill tells Claude how to use them and forbids it to start or cancel
-anything without asking you first.
-
-The tool names, their descriptions, the skill and the messages are in Spanish. Claude handles
-that fine and answers in your language.
+anything without asking you first. Claude answers in your language.
 
 ## Install
 
@@ -87,7 +84,7 @@ Then, in Claude Code: "slice this STL in PETG with 4 walls", "how is the print g
 ## Colours
 
 - **One filament per object**: "the text in black, the base in white". Claude lists the objects
-  with `ver_objetos_3mf` and assigns them with `preparar_multicolor`.
+  with `list_3mf_objects` and assigns them with `prepare_multicolor`.
 - **Filament change by height**: "white up to 3 mm, then black". It also works on a
   single-body STL: the raised part comes out in another colour.
 - **Creality Print 7 mixed filaments**: virtual filaments that alternate two physical ones,
@@ -100,7 +97,7 @@ Then, in Claude Code: "slice this STL in PETG with 4 walls", "how is the print g
 
 Nothing of yours ships with the plugin: whatever it needs, it finds out and stores on your PC.
 
-- **The printer.** The first time, `configurar_impresora` tries the printers saved in Creality
+- **The printer.** The first time, `setup_printer` tries the printers saved in Creality
   Print and, if none answers, scans your LAN (ports 9999 and 7125). It stores the IP and model
   in `%APPDATA%\creality-print-plugin\config.json`; the model is what the bed check uses. If
   the IP changes one day, run it again.
@@ -111,29 +108,29 @@ Nothing of yours ships with the plugin: whatever it needs, it finds out and stor
 
 ```markdown
 ---
-proceso: 0.16mm Standard @Creality K2 0.4 nozzle
-filamentos: [Hyper PLA @Creality K2 0.4 nozzle]
-ajustes:
+process: 0.16mm Standard @Creality K2 0.4 nozzle
+filaments: [Hyper PLA @Creality K2 0.4 nozzle]
+settings:
   wall_loops: 4
   brim_type: outer_only
-carpeta_salida: gcode
-ranuras: {"1": 1D}
+output_dir: gcode
+slots: {"1": 1D}
 ---
 # Wall brackets
 Everything in black PLA. Outdoor parts get 4 walls.
 ```
 
-- **Global**, in `%APPDATA%\creality-print-plugin\CREALITY.md`: always applies. Its `## Notas`
-  section is filled in by `guardar_nota` ("my ABS prints at 270 °C", "brim on tall parts").
+- **Global**, in `%APPDATA%\creality-print-plugin\CREALITY.md`: always applies. Its `## Notes`
+  section is filled in by `add_note` ("my ABS prints at 270 °C", "brim on tall parts").
 - **Per project**, in the models' folder or any folder above it: applies to everything inside.
 - The file closest to the model wins, and whatever you ask for in the conversation wins over
-  all of them. `ajustes` add up from one level to the next.
-- Keys (in Spanish): `maquina` (machine profile), `proceso` (process profile), `filamentos`
-  (one filament profile per extruder), `ajustes` (profile settings to change),
-  `carpeta_salida` (output folder, relative to the file) and `ranuras` (CFS slots Claude will
-  suggest when printing; it still asks you).
+  all of them. `settings` add up from one level to the next.
+- Keys: `machine`, `process`, `filaments` (one filament profile per extruder), `settings`
+  (profile keys to change), `output_dir` (relative to the file) and `slots` (CFS slots Claude
+  will suggest when printing; it still asks you). The Spanish keys of the first version
+  (`maquina`, `proceso`, `ajustes`…) still work.
 - Edit it by hand or ask Claude ("for this folder use 0.16 mm and a brim"). It uses
-  `guardar_preconfiguracion` and first checks that the profiles exist, belong to your printer,
+  `save_presets` and first checks that the profiles exist, belong to your printer,
   and that the settings are real keys.
 
 Optional environment variables, if you'd rather set things by hand:
@@ -177,7 +174,7 @@ printer tests only read: no test uploads, prints or pauses anything.
 ## Status and limits
 
 - Tested on a K2 (base model, 260 mm) with one CFS; other models are untested.
-- **Starting jobs with `imprimir` hasn't been verified on a real print yet.** The protocol comes
+- **Starting jobs with `start_print` hasn't been verified on a real print yet.** The protocol comes
   from Creality Print's code and from the slot mapping the K2 stores for its jobs.
 - Creality Print 7.3 changes the CLI (`--cli`, `slice` only). The plugin adds `--cli` when it
   detects 7.3, but that isn't tested.

@@ -100,31 +100,31 @@ class Informe:
         filamentos = []
         for t in self.herramientas:
             filamentos.append({
-                "extrusor": t + 1,
+                "extruder": t + 1,
                 "gcode": f"T{t}",
-                "tipo": tipos[t] if t < len(tipos) else None,
-                "color": colores[t] if t < len(colores) else None,
-                "perfil": _en(self.lista("filament_settings_id"), t),
+                "type": tipos[t] if t < len(tipos) else None,
+                "colour": colores[t] if t < len(colores) else None,
+                "profile": _en(self.lista("filament_settings_id"), t),
             })
         return {
-            "archivo": self.ruta,
-            "apto": self.apto,
-            "problemas": self.problemas,
-            "avisos": self.avisos,
-            "laminador": self.generado_por,
-            "impresora": self.modelo_impresora,
-            "perfil_maquina": self.valor("printer_settings_id"),
-            "perfil_proceso": self.valor("print_settings_id"),
-            "filamentos": filamentos,
-            "tiempo_estimado": self.tiempo_estimado,
-            "filamento_g": self.valor("total filament weight [g]") or self.valor("filament used [g]"),
-            "filamento_m": _metros(self.valor("filament used [mm]")),
-            "capas": self.valor("total layer number") or self.valor("total layers count"),
-            "cama_mm": list(self.cama) if self.cama else None,
-            "altura_maxima_mm": self.altura_maxima,
-            "caja_pieza": self.pieza.como_dict(),
-            "caja_movimientos": self.desplazamientos.como_dict(),
-            "miniaturas": self.miniaturas,
+            "file": self.ruta,
+            "ok_to_print": self.apto,
+            "problems": self.problemas,
+            "warnings": self.avisos,
+            "slicer": self.generado_por,
+            "printer_model": self.modelo_impresora,
+            "machine_profile": self.valor("printer_settings_id"),
+            "process_profile": self.valor("print_settings_id"),
+            "filaments": filamentos,
+            "estimated_time": self.tiempo_estimado,
+            "filament_g": self.valor("total filament weight [g]") or self.valor("filament used [g]"),
+            "filament_m": _metros(self.valor("filament used [mm]")),
+            "layers": self.valor("total layer number") or self.valor("total layers count"),
+            "bed_mm": list(self.cama) if self.cama else None,
+            "max_height_mm": self.altura_maxima,
+            "part_bounds": self.pieza.como_dict(),
+            "all_moves_bounds": self.desplazamientos.como_dict(),
+            "thumbnails": self.miniaturas,
             "start_print": self.start_print,
         }
 
@@ -267,38 +267,38 @@ def _evaluar(inf: Informe, modelo_esperado: str | None) -> None:
     modelo = inf.modelo_impresora
     if modelo_esperado and modelo != modelo_esperado:
         inf.problemas.append(
-            f"El gcode es para «{modelo or 'desconocida'}» y la impresora es «{modelo_esperado}». "
-            "Relamina con el perfil correcto."
+            f"This gcode is for a '{modelo or 'unknown printer'}' and the printer is a '{modelo_esperado}'. "
+            "Slice it again with the right profile."
         )
     if inf.cama is None:
-        inf.avisos.append("El gcode no dice el tamaño de cama (printable_area); no se han podido comprobar los límites.")
+        inf.avisos.append("The gcode doesn't state the bed size (printable_area); bounds couldn't be checked.")
     else:
         x0, x1, y0, y1 = inf.cama
         caja = inf.pieza
         if caja.vacia:
-            inf.avisos.append("No hay marcas ;LAYER_CHANGE: no se ha podido separar la pieza del arranque.")
+            inf.avisos.append("No ;LAYER_CHANGE markers: the part couldn't be told apart from the start-up moves.")
         else:
             fuera = []
             if caja.x_min < x0 - TOLERANCIA_MM or caja.x_max > x1 + TOLERANCIA_MM:
-                fuera.append(f"X de {caja.x_min:.1f} a {caja.x_max:.1f} (cama {x0:g}-{x1:g})")
+                fuera.append(f"X from {caja.x_min:.1f} to {caja.x_max:.1f} (bed {x0:g}-{x1:g})")
             if caja.y_min < y0 - TOLERANCIA_MM or caja.y_max > y1 + TOLERANCIA_MM:
-                fuera.append(f"Y de {caja.y_min:.1f} a {caja.y_max:.1f} (cama {y0:g}-{y1:g})")
+                fuera.append(f"Y from {caja.y_min:.1f} to {caja.y_max:.1f} (bed {y0:g}-{y1:g})")
             if fuera:
-                inf.problemas.append("El cabezal sale de la cama: " + "; ".join(fuera) + ".")
+                inf.problemas.append("The head leaves the bed: " + "; ".join(fuera) + ".")
             if inf.altura_maxima and caja.z_max > inf.altura_maxima + TOLERANCIA_MM:
                 inf.problemas.append(
-                    f"La pieza llega a Z {caja.z_max:.1f} y la máquina solo tiene {inf.altura_maxima:g} mm."
+                    f"The part reaches Z {caja.z_max:.1f} and the machine only has {inf.altura_maxima:g} mm."
                 )
     if "Creality_Print" not in inf.generado_por and "Creality Print" not in inf.generado_por:
-        inf.avisos.append(f"No lo ha generado Creality Print ({inf.generado_por or 'desconocido'}).")
+        inf.avisos.append(f"Not generated by Creality Print ({inf.generado_por or 'unknown'}).")
         if inf.start_print and not inf.carga_malla:
             inf.avisos.append(
-                "Arranque sin BED_MESH_PROFILE LOAD=default: con gcode de Orca la K2 imprime sin malla."
+                "Start sequence without BED_MESH_PROFILE LOAD=default: with Orca gcode, Creality printers print without the bed mesh."
             )
     if not inf.start_print:
-        inf.avisos.append("No hay START_PRINT: no calentará ni nivelará como espera la K2.")
+        inf.avisos.append("No START_PRINT: the printer won't heat and level the way it expects.")
     if not inf.miniaturas:
-        inf.avisos.append("Sin miniaturas: la pantalla de la impresora no enseñará la vista previa.")
+        inf.avisos.append("No thumbnails: the printer's screen won't show a preview.")
 
 
 # ---------------------------------------------------------------- miniaturas

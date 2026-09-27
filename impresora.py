@@ -105,7 +105,7 @@ def ranura_a_indices(ranura: str) -> tuple[int, int]:
     if len(r) == 1:
         r = "1" + r
     if len(r) != 2 or not r[0].isdigit() or r[1] not in "ABCD":
-        raise ErrorImpresora(f"Ranura «{ranura}» no válida: usa 1A, 1B, 1C, 1D (2A… con más CFS).")
+        raise ErrorImpresora(f"Invalid slot '{ranura}': use 1A, 1B, 1C, 1D (2A… with more CFS units).")
     return int(r[0]), "ABCD".index(r[1])
 
 
@@ -148,10 +148,10 @@ class Impresora:
                 return cls(host, modelo)
             except httpx.HTTPError:
                 continue
-        probadas = f" (probado: {', '.join(h for h, _ in candidatos)})" if candidatos else ""
+        probadas = f" (tried: {', '.join(h for h, _ in candidatos)})" if candidatos else ""
         raise ErrorImpresora(
-            f"No encuentro la impresora{probadas}. Usa configurar_impresora para buscarla en la red "
-            "(puede haber cambiado de IP) o define CREALITY_HOST."
+            f"Can't find the printer{probadas}. Use setup_printer to look for it on the network "
+            "(its IP may have changed) or set CREALITY_HOST."
         )
 
     # ------------------------------------------------------------ Moonraker
@@ -165,7 +165,7 @@ class Impresora:
             r = httpx.get(self._url + ruta, params=params or None, timeout=15)
             r.raise_for_status()
         except httpx.HTTPError as e:
-            raise ErrorImpresora(f"Moonraker no responde en {self.host}: {e}") from e
+            raise ErrorImpresora(f"Moonraker isn't answering at {self.host}: {e}") from e
         return r.json()["result"]
 
     def consultar(self, *objetos: str) -> dict:
@@ -174,7 +174,7 @@ class Impresora:
             r = httpx.get(f"{self._url}/printer/objects/query?{consulta}", timeout=15)
             r.raise_for_status()
         except httpx.HTTPError as e:
-            raise ErrorImpresora(f"Moonraker no responde en {self.host}: {e}") from e
+            raise ErrorImpresora(f"Moonraker isn't answering at {self.host}: {e}") from e
         return r.json()["result"]["status"]
 
     @property
@@ -209,22 +209,22 @@ class Impresora:
         if ps.get("state") == "printing" and datos.get("estimated_time") and progreso:
             restante = max(0, int(datos["estimated_time"] * (1 - progreso)))
         return {
-            "impresora": self.host,
-            "modelo": self.modelo[0] if self.modelo else self.modelo_codigo or None,
+            "printer": self.host,
+            "model": self.modelo[0] if self.modelo else self.modelo_codigo or None,
             "klipper": s.get("webhooks", {}).get("state"),
-            "estado": ps.get("state"),
-            "archivo": ps.get("filename") or None,
-            "progreso_pct": round(progreso * 100, 1),
-            "capa": vs.get("layer"),
-            "capas": vs.get("layer_count"),
-            "tiempo_impreso": _hms(ps.get("print_duration")),
-            "tiempo_restante_aprox": _hms(restante),
-            "filamento_usado_m": round((ps.get("filament_used") or 0) / 1000, 2),
-            "boquilla": _temp(s.get("extruder")),
-            "cama": _temp(s.get("heater_bed")),
-            "camara": round(s.get("temperature_sensor chamber_temp", {}).get("temperature", 0), 1),
-            "malla_cama": s.get("bed_mesh", {}).get("profile_name"),
-            "mensaje": ps.get("message") or None,
+            "state": ps.get("state"),
+            "file": ps.get("filename") or None,
+            "progress_pct": round(progreso * 100, 1),
+            "layer": vs.get("layer"),
+            "layers": vs.get("layer_count"),
+            "printed_for": _hms(ps.get("print_duration")),
+            "time_left_approx": _hms(restante),
+            "filament_used_m": round((ps.get("filament_used") or 0) / 1000, 2),
+            "nozzle": _temp(s.get("extruder")),
+            "bed": _temp(s.get("heater_bed")),
+            "chamber": round(s.get("temperature_sensor chamber_temp", {}).get("temperature", 0), 1),
+            "bed_mesh": s.get("bed_mesh", {}).get("profile_name"),
+            "message": ps.get("message") or None,
         }
 
     def archivos(self, filtro: str = "", limite: int = 20) -> list[dict]:
@@ -232,16 +232,16 @@ class Impresora:
         palabras = filtro.lower().split()
         lista = [f for f in lista if all(p in f["path"].lower() for p in palabras)]
         lista.sort(key=lambda f: -f.get("modified", 0))
-        return [{"nombre": f["path"], "mb": round(f["size"] / 1e6, 2),
-                 "modificado": time.strftime("%Y-%m-%d %H:%M", time.localtime(f["modified"]))}
+        return [{"name": f["path"], "mb": round(f["size"] / 1e6, 2),
+                 "modified": time.strftime("%Y-%m-%d %H:%M", time.localtime(f["modified"]))}
                 for f in lista[:limite]]
 
     def historial(self, limite: int = 10) -> list[dict]:
         trabajos = self._get("/server/history/list", limit=limite, order="desc").get("jobs", [])
-        return [{"archivo": j.get("filename"), "estado": j.get("status"),
-                 "inicio": time.strftime("%Y-%m-%d %H:%M", time.localtime(j.get("start_time", 0))),
-                 "duracion": _hms(j.get("total_duration")),
-                 "filamento_m": round((j.get("filament_used") or 0) / 1000, 2)} for j in trabajos]
+        return [{"file": j.get("filename"), "status": j.get("status"),
+                 "started": time.strftime("%Y-%m-%d %H:%M", time.localtime(j.get("start_time", 0))),
+                 "duration": _hms(j.get("total_duration")),
+                 "filament_m": round((j.get("filament_used") or 0) / 1000, 2)} for j in trabajos]
 
     def metadatos(self, nombre: str) -> dict:
         return self._get("/server/files/metadata", filename=nombre)
@@ -250,7 +250,7 @@ class Impresora:
         url = f"{self._url}/server/files/gcodes/{urllib.parse.quote(nombre)}"
         with httpx.stream("GET", url, timeout=120) as r:
             if r.status_code == 404:
-                raise ErrorImpresora(f"La impresora no tiene «{nombre}».")
+                raise ErrorImpresora(f"The printer has no file '{nombre}'.")
             r.raise_for_status()
             with open(destino, "wb") as f:
                 for trozo in r.iter_bytes(1 << 20):
@@ -261,18 +261,18 @@ class Impresora:
         local = Path(local)
         nombre = nombre or local.name
         if not nombre.lower().endswith(".gcode"):
-            raise ErrorImpresora("Solo se suben .gcode.")
+            raise ErrorImpresora("Only .gcode files can be uploaded.")
         estado = self.consultar("print_stats")["print_stats"]
         if estado.get("state") in ("printing", "paused") and estado.get("filename") == nombre:
-            raise ErrorImpresora(f"«{nombre}» se está imprimiendo ahora mismo; súbelo con otro nombre.")
+            raise ErrorImpresora(f"'{nombre}' is printing right now; upload it under another name.")
         with open(local, "rb") as f:
             try:
                 r = httpx.post(f"{self._url}/server/files/upload", data={"root": "gcodes"},
                                files={"file": (nombre, f, "application/octet-stream")}, timeout=600)
                 r.raise_for_status()
             except httpx.HTTPError as e:
-                raise ErrorImpresora(f"No se ha podido subir: {e}") from e
-        return {"nombre": nombre, "ruta_impresora": f"{self.dir_gcodes}/{nombre}",
+                raise ErrorImpresora(f"Upload failed: {e}") from e
+        return {"name": nombre, "path_on_printer": f"{self.dir_gcodes}/{nombre}",
                 "mb": round(local.stat().st_size / 1e6, 2)}
 
     # ------------------------------------------------------------ websocket 9999
@@ -306,7 +306,7 @@ class Impresora:
                         if hasta and hasta(visto):
                             break
         except OSError as e:
-            raise ErrorImpresora(f"El websocket de la impresora ({self.host}:{PUERTO_WS}) no responde: {e}") from e
+            raise ErrorImpresora(f"The printer's websocket ({self.host}:{PUERTO_WS}) isn't answering: {e}") from e
         return visto
 
     def cfs(self) -> dict:
@@ -314,29 +314,29 @@ class Impresora:
                      hasta=lambda v: "boxsInfo" in v)
         info = d.get("boxsInfo")
         if not info:
-            raise ErrorImpresora("La impresora no ha mandado el estado del CFS.")
+            raise ErrorImpresora("The printer didn't send the CFS status.")
         ranuras = []
         for caja in info.get("materialBoxs", []):
             if caja.get("type") != 0:  # type 1 = portabobinas externo
                 continue
             for m in caja.get("materials", []):
                 ranuras.append({
-                    "ranura": f"{caja['id']}{'ABCD'[m['id']]}",
+                    "slot": f"{caja['id']}{'ABCD'[m['id']]}",
                     "material": m.get("type") or None,
-                    "nombre": m.get("name") or None,
-                    "marca": m.get("vendor") or None,
-                    "color": _color(m.get("color")),
+                    "name": m.get("name") or None,
+                    "brand": m.get("vendor") or None,
+                    "colour": _color(m.get("color")),
                     "rfid": m.get("rfid") or None,
-                    "restante_pct": m.get("percent"),
-                    "vacia": m.get("state") != 1,
-                    "en_uso": bool(m.get("selected")),
+                    "remaining_pct": m.get("percent"),
+                    "empty": m.get("state") != 1,
+                    "in_use": bool(m.get("selected")),
                     "_color_crudo": m.get("color"),
                 })
         return {
-            "cfs_conectado": bool(d.get("cfsConnect", 1)),
-            "ranuras": ranuras,
-            "mapeo_ultimo_trabajo": [_mapeo_legible(m) for m in info.get("colorMatch") or []],
-            "humedad_pct": next((c.get("humidity") for c in info.get("materialBoxs", []) if c.get("type") == 0), None),
+            "cfs_connected": bool(d.get("cfsConnect", 1)),
+            "slots": ranuras,
+            "last_job_mapping": [_mapeo_legible(m) for m in info.get("colorMatch") or []],
+            "humidity_pct": next((c.get("humidity") for c in info.get("materialBoxs", []) if c.get("type") == 0), None),
         }
 
     def estado_ws(self) -> dict:
@@ -356,15 +356,15 @@ class Impresora:
         mapeo = []
         if ranuras:
             cfs = self.cfs()
-            por_ranura = {r["ranura"]: r for r in cfs["ranuras"]}
+            por_ranura = {r["slot"]: r for r in cfs["slots"]}
             for extrusor, ranura in sorted(ranuras.items()):
                 caja, material = ranura_a_indices(ranura)
                 clave = f"{caja}{'ABCD'[material]}"
                 r = por_ranura.get(clave)
                 if r is None:
-                    raise ErrorImpresora(f"La ranura {clave} no existe en el CFS.")
-                if r["vacia"]:
-                    raise ErrorImpresora(f"La ranura {clave} está vacía.")
+                    raise ErrorImpresora(f"Slot {clave} doesn't exist in the CFS.")
+                if r["empty"]:
+                    raise ErrorImpresora(f"Slot {clave} is empty.")
                 tipo = (tipos[extrusor - 1] if tipos and extrusor - 1 < len(tipos) else None) or r["material"] or "PLA"
                 mapeo.append({"id": id_extrusor(extrusor), "type": tipo, "color": r["_color_crudo"],
                               "boxId": caja, "materialId": material})
@@ -383,14 +383,14 @@ class Impresora:
                 arrancada = True
                 break
             time.sleep(2)
-        return {"archivo": nombre, "mapeo_enviado": mapeo or None, "arrancada": arrancada,
-                "respuesta": {k: respuesta[k] for k in ("err", "deviceState", "printFileName") if k in respuesta}}
+        return {"file": nombre, "mapping_sent": mapeo or None, "started": arrancada,
+                "printer_reply": {k: respuesta[k] for k in ("err", "deviceState", "printFileName") if k in respuesta}}
 
     def control(self, accion: str) -> dict:
         """pausar / reanudar / cancelar, con los mismos mensajes que Creality Print."""
-        params = {"pausar": {"pause": 1}, "reanudar": {"pause": 0}, "cancelar": {"stop": 1}}.get(accion)
+        params = {"pause": {"pause": 1}, "resume": {"pause": 0}, "cancel": {"stop": 1}}.get(accion)
         if params is None:
-            raise ErrorImpresora("Acción no válida: pausar, reanudar o cancelar.")
+            raise ErrorImpresora("Invalid action: pause, resume or cancel.")
         self._ws([{"method": "set", "params": params}], esperar=2)
         time.sleep(2)
         return self.estado()
@@ -407,7 +407,7 @@ def _mapeo_legible(m: dict) -> dict:
     except (ValueError, IndexError):
         extrusor = None
     ranura = f"{m.get('boxId')}{'ABCD'[m['materialId']]}" if isinstance(m.get("materialId"), int) else None
-    return {"extrusor": extrusor, "ranura": ranura}
+    return {"extruder": extrusor, "slot": ranura}
 
 
 def _color(c: str | None) -> str | None:

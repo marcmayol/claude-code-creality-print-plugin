@@ -79,7 +79,7 @@ def test_perfil_k2_pro_se_rechaza_aunque_su_cama_diga_300(tmp_path):
     inf = gcode.analizar(ruta, "Creality K2", (260, 260, 260))
     assert not inf.apto
     assert any("K2 Pro" in p for p in inf.problemas)
-    assert any("sale de la cama" in p for p in inf.problemas)
+    assert any("leaves the bed" in p for p in inf.problemas)
 
 
 def test_modelo_equivocado_es_problema(tmp_path):
@@ -97,7 +97,7 @@ def test_movimientos_relativos_se_suman(tmp_path):
 
 def test_sin_miniaturas_avisa(tmp_path):
     inf = gcode.analizar(escribir(tmp_path, capas_en(100, 150)), "Creality K2", (260, 260, 260))
-    assert any("miniaturas" in a for a in inf.avisos)
+    assert any("thumbnails" in a for a in inf.avisos)
 
 
 def test_orca_sin_malla_avisa(tmp_path):
@@ -130,9 +130,9 @@ def test_insertar_miniaturas_formato_creality(tmp_path):
 def test_resumen_filamentos(tmp_path):
     capas = capas_en(100, 150) + "T1\nG1 X110 Y110 E1\n"
     r = gcode.analizar(escribir(tmp_path, capas), "Creality K2", (260, 260, 260)).resumen()
-    assert [f["extrusor"] for f in r["filamentos"]] == [1, 2]
-    assert r["filamentos"][1]["color"] == "#000000"
-    assert r["filamentos"][1]["perfil"] == "CR-PLA @Creality K2 0.4 nozzle"
+    assert [f["extruder"] for f in r["filaments"]] == [1, 2]
+    assert r["filaments"][1]["colour"] == "#000000"
+    assert r["filaments"][1]["profile"] == "CR-PLA @Creality K2 0.4 nozzle"
 
 
 def test_partir_lista():

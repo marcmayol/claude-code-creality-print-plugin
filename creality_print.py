@@ -57,7 +57,7 @@ def _buscar_exe() -> Path:
         exe = Path(os.environ["CREALITY_PRINT_EXE"])
         if exe.is_file():
             return exe
-        raise ErrorCrealityPrint(f"CREALITY_PRINT_EXE apunta a {exe}, que no existe.")
+        raise ErrorCrealityPrint(f"CREALITY_PRINT_EXE points to {exe}, which doesn't exist.")
     candidatos: list[Path] = []
     for base in {os.environ.get("ProgramFiles", r"C:\Program Files"), r"C:\Program Files"}:
         candidatos += Path(base, "Creality").glob("Creality Print*/CrealityPrint.exe")
@@ -97,7 +97,7 @@ def _buscar_datos() -> Path:
     base = Path(os.environ.get("APPDATA", "")) / "Creality" / "Creality Print"
     carpetas = [d for d in base.glob("*") if (d / "Creality.conf").is_file()]
     if not carpetas:
-        raise ErrorCrealityPrint(f"No encuentro los datos de Creality Print en {base}. ¿Lo has abierto alguna vez?")
+        raise ErrorCrealityPrint(f"Can't find Creality Print's data in {base}. Has it ever been opened?")
     return max(carpetas, key=lambda d: _version_tupla(d.name))
 
 
@@ -151,14 +151,14 @@ class CrealityPrint:
 
     def info(self) -> dict:
         return {
-            "ejecutable": str(self.exe),
+            "executable": str(self.exe),
             "version": self.version,
-            "modo_cli": "7.3+ (--cli)" if self.prefijo_cli else "7.2 (Bambu)",
-            "datos": str(self.datos),
-            "perfiles_sistema": str(self.dir_sistema),
-            "perfiles_usuario": [str(d) for d in self.dirs_usuario if d.is_dir()],
-            "perfiles_activos": self.perfiles_activos,
-            "abierto": _proceso_abierto(),
+            "cli_mode": "7.3+ (--cli)" if self.prefijo_cli else "7.2 (Bambu)",
+            "data_dir": str(self.datos),
+            "system_profiles": str(self.dir_sistema),
+            "user_profiles": [str(d) for d in self.dirs_usuario if d.is_dir()],
+            "selected_profiles": self.perfiles_activos,
+            "app_running": _proceso_abierto(),
         }
 
     # ------------------------------------------------------------ perfiles
@@ -180,8 +180,8 @@ class CrealityPrint:
             ruta, origen = self._indice[tipo][nombre]
         except KeyError:
             parecidos = difflib.get_close_matches(nombre, self._indice[tipo].keys(), n=5, cutoff=0.5)
-            pista = f" ¿Querías decir: {', '.join(parecidos)}?" if parecidos else ""
-            raise ErrorCrealityPrint(f"No existe el perfil de {tipo} «{nombre}».{pista}") from None
+            pista = f" Did you mean: {', '.join(parecidos)}?" if parecidos else ""
+            raise ErrorCrealityPrint(f"There is no {tipo} profile '{nombre}'.{pista}") from None
         return json.loads(ruta.read_text(encoding="utf-8")), origen
 
     def listar_perfiles(self, tipo: str, filtro: str = "", maquina: str | None = None,
@@ -193,7 +193,7 @@ class CrealityPrint:
         `maquina=""` quita el filtro.
         """
         if tipo not in TIPOS:
-            raise ErrorCrealityPrint(f"Tipo de perfil «{tipo}» desconocido: usa {', '.join(TIPOS)}.")
+            raise ErrorCrealityPrint(f"Unknown profile kind '{tipo}': use {', '.join(TIPOS)}.")
         palabras = filtro.lower().split()
         if maquina is None and tipo != "machine":
             maquina = self.perfiles_activos["machine"] or ""
@@ -211,7 +211,7 @@ class CrealityPrint:
                     continue
                 if str(datos.get("instantiation", "true")).lower() != "true":
                     continue
-            salida.append({"nombre": nombre, "origen": origen})
+            salida.append({"name": nombre, "source": "user" if origen == "usuario" else "system"})
         return salida
 
     def resolver_perfil(self, tipo: str, nombre: str) -> dict:
@@ -226,7 +226,7 @@ class CrealityPrint:
         actual = nombre
         while actual:
             if actual in visto:
-                raise ErrorCrealityPrint(f"Herencia circular en el perfil «{nombre}».")
+                raise ErrorCrealityPrint(f"Circular inheritance in profile '{nombre}'.")
             visto.add(actual)
             datos, _ = self._cargar(tipo, actual)
             cadena.append(datos)
@@ -269,8 +269,8 @@ def aplicar_ajustes(perfiles: dict[str, list[dict]], ajustes: dict) -> list[str]
                         if any(clave in p for p in perfiles[t])), None)
         if destino is None:
             parecidas = difflib.get_close_matches(clave, todas, n=5, cutoff=0.6)
-            pista = f" Parecidas: {', '.join(parecidas)}." if parecidas else ""
-            raise ErrorCrealityPrint(f"El ajuste «{clave}» no existe en los perfiles.{pista}")
+            pista = f" Similar keys: {', '.join(parecidas)}." if parecidas else ""
+            raise ErrorCrealityPrint(f"The setting '{clave}' doesn't exist in the profiles.{pista}")
         for p in perfiles[destino]:
             if clave not in p:
                 continue
@@ -356,7 +356,7 @@ def preparar_3mf_plano(ruta: Path, destino: Path, cama: tuple[float, float]) -> 
         xml = z.read("3D/3dmodel.model").decode("utf-8")
         otros = {n: z.read(n) for n in nombres if n != "3D/3dmodel.model"}
     if "<components>" in xml or re.search(r"<item [^>]*transform=", xml):
-        return {"centrado": False, "aviso": "El 3MF usa componentes o transformaciones; no lo he recolocado."}
+        return {"centrado": False, "aviso": "The 3MF uses components or transforms; it wasn't re-centred."}
     xs, ys, zs = [], [], []
     for m in _RE_VERTICE.finditer(xml):
         xs.append(float(m.group(1)))
@@ -420,7 +420,7 @@ def stl_a_3mf(stl: Path, destino: Path) -> Path:
                  re.findall(rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)", datos)]
         triangulos = [tuple(verts[i:i + 3]) for i in range(0, len(verts) - 2, 3)]
     if not triangulos:
-        raise ErrorCrealityPrint(f"{stl.name} no tiene triángulos: ¿es un STL?")
+        raise ErrorCrealityPrint(f"{stl.name} has no triangles: is it an STL?")
     indice: dict[tuple, int] = {}
     caras = []
     for t in triangulos:
@@ -467,8 +467,8 @@ def objetos_3mf(ruta: Path) -> list[dict]:
         pindex = a.get("pindex")
         salida.append({
             "id": a["id"],
-            "nombre": nombre,
-            "extrusor": extrusor or 1,
+            "name": nombre,
+            "extruder": extrusor or 1,
             "material_3mf": materiales[int(pindex)] if pindex and int(pindex) < len(materiales) else None,
         })
     return salida
@@ -508,14 +508,14 @@ def preparar_multicolor(
     """
     modelo = Path(modelo).resolve()
     if not modelo.is_file():
-        raise ErrorCrealityPrint(f"No existe {modelo}.")
+        raise ErrorCrealityPrint(f"{modelo} doesn't exist.")
     destino = Path(salida).resolve() if salida else modelo.with_name(f"{modelo.stem}_multicolor.3mf")
     with tempfile.TemporaryDirectory() as tmp:
         origen = modelo
         if modelo.suffix.lower() == ".stl":
             origen = stl_a_3mf(modelo, Path(tmp) / "desde_stl.3mf")
         elif modelo.suffix.lower() != ".3mf":
-            raise ErrorCrealityPrint("preparar_multicolor admite STL y 3MF.")
+            raise ErrorCrealityPrint("prepare_multicolor accepts STL and 3MF.")
         centrado = Path(tmp) / "centrado.3mf"
         if preparar_3mf_plano(origen, centrado, cama) and centrado.is_file():
             origen = centrado
@@ -528,18 +528,20 @@ def preparar_multicolor(
         config = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n</config>\n'
     for clave, extrusor in (asignar or {}).items():
         if int(extrusor) < 1:
-            raise ErrorCrealityPrint("Los extrusores empiezan en 1.")
-        o = next((o for o in objetos if clave == o["id"] or clave.lower() == o["nombre"].lower()), None)
+            raise ErrorCrealityPrint("Extruders start at 1.")
+        o = next((o for o in objetos if clave == o["id"] or clave.lower() == o["name"].lower()), None)
         if o is None:
             raise ErrorCrealityPrint(
-                f"No hay ningún objeto «{clave}». Objetos: " + ", ".join(f"{o['nombre']} ({o['id']})" for o in objetos))
-        config = _poner_extrusor(config, o["id"], o["nombre"], int(extrusor))
+                f"There is no object '{clave}'. Objects: " + ", ".join(f"{o['name']} ({o['id']})" for o in objetos))
+        config = _poner_extrusor(config, o["id"], o["name"], int(extrusor))
     contenido["Metadata/model_settings.config"] = config.encode("utf-8")
 
+    cambios_altura = [{"z": c["z"], "extruder": int(c.get("extruder", c.get("extrusor", 0)))}
+                      for c in cambios_altura or []]
     if cambios_altura:
         capas = []
         for c in sorted(cambios_altura, key=lambda c: float(c["z"])):
-            capas.append(f'<layer top_z="{float(c["z"]):g}" type="2" extruder="{int(c["extrusor"])}" '
+            capas.append(f'<layer top_z="{float(c["z"]):g}" type="2" extruder="{c["extruder"]}" '
                          f'color="" extra="" gcode="tool_change"/>')
         contenido["Metadata/custom_gcode_per_layer.xml"] = (
             '<?xml version="1.0" encoding="utf-8"?>\n<custom_gcodes_per_layer>\n<plate>\n<plate_info id="1"/>\n'
@@ -551,16 +553,16 @@ def preparar_multicolor(
         for n, d in contenido.items():
             z.writestr(n, d)
     objetos = objetos_3mf(destino)
-    usados = sorted({o["extrusor"] for o in objetos} | {int(c["extrusor"]) for c in cambios_altura or []})
-    return {"archivo": str(destino), "objetos": objetos, "cambios_altura": cambios_altura or [],
-            "extrusores_usados": usados}
+    usados = sorted({o["extruder"] for o in objetos} | {c["extruder"] for c in cambios_altura})
+    return {"file": str(destino), "objects": objetos, "height_changes": cambios_altura,
+            "extruders_used": usados}
 
 
-MODOS_MEZCLA = {"capas": 0, "puntos": 1, "simple": 2}
+MODOS_MEZCLA = {"layers": 0, "dots": 1, "simple": 2, "capas": 0, "puntos": 1}
 
 
 def filas_mezcla(mezclas: list[dict], n_fisicos: int) -> str:
-    """[{"a": 1, "b": 2, "porcentaje_b": 50, "modo": "capas"}] -> mixed_filament_definitions.
+    """[{"a": 1, "b": 2, "percent_b": 50, "mode": "layers"}] -> mixed_filament_definitions.
 
     Formato de MixedFilamentManager::serialize_custom_entries (Creality Print 7.2):
     a,b,activo,custom,%B,0,g,w,m<modo>,d0,o0,u<id>. La mezcla i es el extrusor n_fisicos+i.
@@ -569,11 +571,11 @@ def filas_mezcla(mezclas: list[dict], n_fisicos: int) -> str:
     for i, m in enumerate(mezclas, start=1):
         a, b = int(m.get("a", 1)), int(m.get("b", 2))
         if not (1 <= a <= n_fisicos and 1 <= b <= n_fisicos) or a == b:
-            raise ErrorCrealityPrint(f"Mezcla {i}: a y b deben ser dos filamentos distintos entre 1 y {n_fisicos}.")
-        modo = m.get("modo", "capas")
+            raise ErrorCrealityPrint(f"Mix {i}: a and b must be two different filaments between 1 and {n_fisicos}.")
+        modo = m.get("mode", m.get("modo", "layers"))
         if modo not in MODOS_MEZCLA:
-            raise ErrorCrealityPrint(f"Mezcla {i}: modo «{modo}» no válido; usa {', '.join(MODOS_MEZCLA)}.")
-        pct = max(0, min(100, int(m.get("porcentaje_b", 50))))
+            raise ErrorCrealityPrint(f"Mix {i}: invalid mode '{modo}'; use layers, dots or simple.")
+        pct = max(0, min(100, int(m.get("percent_b", m.get("porcentaje_b", 50)))))
         filas.append(f"{a},{b},1,1,{pct},0,g,w,m{MODOS_MEZCLA[modo]},d0,o0,u{i}")
     return ";".join(filas)
 
@@ -685,7 +687,7 @@ def laminar(
     """
     modelo = Path(modelo).resolve()
     if not modelo.is_file():
-        raise ErrorCrealityPrint(f"No existe {modelo}.")
+        raise ErrorCrealityPrint(f"{modelo} doesn't exist.")
     es_3mf = modelo.suffix.lower() == ".3mf"
     salida = Path(salida).resolve() if salida else modelo.parent
     salida.mkdir(parents=True, exist_ok=True)
@@ -708,16 +710,17 @@ def laminar(
             res.avisos.append(preparado["aviso"])
         elif preparado:
             res.avisos.append(
-                f"3MF sin datos de Creality: recolocado en el centro de la cama "
-                f"({preparado['tamano_mm'][0]}×{preparado['tamano_mm'][1]} mm) y "
-                f"{preparado['num_filamentos']} filamento(s) por material: {', '.join(preparado['materiales']) or '—'}."
+                f"3MF without Creality data: centred on the bed "
+                f"({preparado['tamano_mm'][0]}×{preparado['tamano_mm'][1]} mm), "
+                f"{preparado['num_filamentos']} filament(s) by material: {', '.join(preparado['materiales']) or '—'}."
             )
             proyecto = {**proyecto, "num_filamentos": preparado["num_filamentos"], "colores": preparado["colores"]}
 
     if es_3mf and usar_perfiles_del_3mf:
         if maquina or proceso or filamentos or ajustes:
-            raise ErrorCrealityPrint("Con usar_perfiles_del_3mf no se pueden pasar perfiles ni ajustes.")
-        res.perfiles = {"origen": "3MF", **{k: proyecto[k] for k in ("maquina", "proceso", "filamentos")}}
+            raise ErrorCrealityPrint("With use_3mf_profiles you can't pass profiles or settings.")
+        res.perfiles = {"source": "3MF", "machine": proyecto["maquina"], "process": proyecto["proceso"],
+                        "filaments": proyecto["filamentos"]}
     else:
         maquina = maquina or activos["machine"]
         proceso = proceso or activos["process"]
@@ -726,16 +729,16 @@ def laminar(
         if mezclas:
             # Con mezclas, los extrusores por encima de los físicos son virtuales.
             if len(filamentos) < 2:
-                raise ErrorCrealityPrint("Para mezclar hacen falta al menos dos filamentos en `filamentos`.")
+                raise ErrorCrealityPrint("Mixing needs at least two filaments in `filaments`.")
             n = len(filamentos)
         if not (maquina and proceso and filamentos):
-            raise ErrorCrealityPrint("Faltan perfiles y Creality Print no tiene ninguno seleccionado.")
+            raise ErrorCrealityPrint("Profiles are missing and Creality Print has none selected.")
         if len(filamentos) < n:
             if len(filamentos) == 1:
-                res.avisos.append(f"El 3MF usa {n} filamentos: se usa «{filamentos[0]}» para todos.")
+                res.avisos.append(f"The 3MF uses {n} filaments: '{filamentos[0]}' is used for all of them.")
                 filamentos = filamentos * n
             else:
-                raise ErrorCrealityPrint(f"El 3MF usa {n} filamentos y se han indicado {len(filamentos)}.")
+                raise ErrorCrealityPrint(f"The 3MF uses {n} filaments and {len(filamentos)} were given.")
         planos = {
             "machine": [cp.resolver_perfil("machine", maquina)],
             "process": [cp.resolver_perfil("process", proceso)],
@@ -744,8 +747,8 @@ def laminar(
         modelo_perfil = planos["machine"][0].get("printer_model", "")
         if modelo_esperado and modelo_perfil and modelo_perfil != modelo_esperado:
             raise ErrorCrealityPrint(
-                f"El perfil de máquina «{maquina}» es de una «{modelo_perfil}» y la impresora es una "
-                f"«{modelo_esperado}». Elige un perfil de «{modelo_esperado}»."
+                f"The machine profile '{maquina}' is for a '{modelo_perfil}' and the printer is a "
+                f"'{modelo_esperado}'. Pick a '{modelo_esperado}' profile."
             )
         _comprobar_compatibles(planos, maquina, res.avisos)
         if proyecto:
@@ -758,8 +761,9 @@ def laminar(
         if mezclas:
             planos["process"][0]["mixed_filament_definitions"] = filas_mezcla(mezclas, len(filamentos))
             res.ajustes_aplicados.append(
-                "mezclas: " + ", ".join(f"extrusor {len(filamentos) + i} = {m.get('a', 1)}+{m.get('b', 2)} "
-                                        f"({m.get('modo', 'capas')}, {m.get('porcentaje_b', 50)} % de {m.get('b', 2)})"
+                "mixes: " + ", ".join(f"extruder {len(filamentos) + i} = {m.get('a', 1)}+{m.get('b', 2)} "
+                                      f"({m.get('mode', m.get('modo', 'layers'))}, "
+                                      f"{m.get('percent_b', m.get('porcentaje_b', 50))} % of {m.get('b', 2)})"
                                         for i, m in enumerate(mezclas, start=1)))
         rutas = {}
         for tipo, lista in planos.items():
@@ -770,7 +774,7 @@ def laminar(
                 rutas[tipo].append(str(f))
         cmd += ["--load-settings", ";".join(rutas["machine"] + rutas["process"]),
                 "--load-filaments", ";".join(rutas["filament"])]
-        res.perfiles = {"origen": "forzados", "maquina": maquina, "proceso": proceso, "filamentos": filamentos}
+        res.perfiles = {"source": "given", "machine": maquina, "process": proceso, "filaments": filamentos}
     if colocar:
         cmd += ["--arrange", "1"]
     if orientar:
@@ -787,14 +791,17 @@ def laminar(
     generados = sorted(trabajo.glob("plate_*.gcode"), key=lambda p: int(re.findall(r"\d+", p.stem)[0]))
 
     if codigo != 0 or not generados:
-        destino_log = salida / f"{_nombre_seguro(modelo.stem)}_error_laminado.log"
+        destino_log = salida / f"{_nombre_seguro(modelo.stem)}_slicing_error.log"
         if log.is_file():
             shutil.copyfile(log, destino_log)
-        motivo = _motivo_error(log) or (f"se pasó de {tiempo_max} s" if codigo is None else f"código {codigo}")
+        motivo = _motivo_error(log) or (f"took longer than {tiempo_max} s" if codigo is None else f"exit code {codigo}")
         shutil.rmtree(trabajo, ignore_errors=True)
-        raise ErrorCrealityPrint(f"Creality Print no ha laminado {modelo.name}: {motivo}. Log: {destino_log}")
+        raise ErrorCrealityPrint(f"Creality Print couldn't slice {modelo.name}: {motivo}. Log: {destino_log}")
 
-    maquina_plana = cp.resolver_perfil("machine", res.perfiles["maquina"]) if res.perfiles.get("maquina") else {}
+    try:
+        maquina_plana = cp.resolver_perfil("machine", res.perfiles["machine"]) if res.perfiles.get("machine") else {}
+    except ErrorCrealityPrint:
+        maquina_plana = {}
     for g in generados:
         n_placa = int(re.findall(r"\d+", g.stem)[0])
         inf = gcode.analizar(g, modelo_esperado, cama)
@@ -805,15 +812,15 @@ def laminar(
                 gcode.insertar_miniaturas(g, [(w, h, _png_escalado(base, w, h)) for w, h in _tamanos(maquina_plana)])
                 inf = gcode.analizar(g, modelo_esperado, cama)
             else:
-                res.avisos.append(f"Placa {n_placa}: no he podido generar la miniatura.")
+                res.avisos.append(f"Plate {n_placa}: couldn't render the thumbnail.")
         tipo = (inf.lista("filament_type") or ["PLA"])[0]
         nombre = f"{_nombre_seguro(modelo.name)}_{tipo}_{_nombre_tiempo(inf.tiempo_estimado)}"
         if len(generados) > 1:
-            nombre += f"_placa{n_placa}"
+            nombre += f"_plate{n_placa}"
         destino = salida / f"{nombre}.gcode"
         os.replace(g, destino)
         inf.ruta = str(destino)
-        res.gcodes.append({"placa": n_placa, **inf.resumen()})
+        res.gcodes.append({"plate": n_placa, **inf.resumen()})
     shutil.rmtree(trabajo, ignore_errors=True)
     return res
 
@@ -833,18 +840,18 @@ def _comprobar_compatibles(planos: dict, maquina: str, avisos: list[str]) -> Non
         for p in planos[tipo]:
             compatibles = p.get("compatible_printers") or []
             if compatibles and maquina not in compatibles:
-                avisos.append(f"El perfil «{p.get('name')}» no declara compatible «{maquina}».")
+                avisos.append(f"Profile '{p.get('name')}' doesn't list '{maquina}' as compatible.")
 
 
 # Lo que Creality Print escribe en el log y lo que significa para quien lamina.
 _EXPLICACIONES = [
     (r"gcode path conflicts found between (.+?) and (.+)",
-     "las trayectorias de «{0}» y «{1}» chocan (a menudo la torre de purga no cabe: prueba "
-     "ajustes={{'enable_prime_tower': 0}} o separa las piezas en Creality Print)"),
-    (r"found slicing result conflict", "hay un conflicto de trayectorias entre objetos"),
-    (r"outside of plate|out of (the )?plate|outside the print area", "el modelo se sale de la cama"),
-    (r"File Version .* not supported", "el 3MF es de otra versión de Creality Print"),
-    (r"got error when validate: (.+)", "ajustes incompatibles: {0}"),
+     "the toolpaths of '{0}' and '{1}' collide (often the prime tower doesn't fit: try "
+     "settings={{'enable_prime_tower': 0}} or move the parts apart in Creality Print)"),
+    (r"found slicing result conflict", "toolpaths of different objects collide"),
+    (r"outside of plate|out of (the )?plate|outside the print area", "the model goes outside the bed"),
+    (r"File Version .* not supported", "the 3MF comes from another Creality Print version"),
+    (r"got error when validate: (.+)", "incompatible settings: {0}"),
 ]
 
 
@@ -875,7 +882,7 @@ def abrir(cp: CrealityPrint, ruta: str | os.PathLike, en_ventana_abierta: bool =
     """
     ruta = Path(ruta).resolve()
     if not ruta.is_file():
-        raise ErrorCrealityPrint(f"No existe {ruta}.")
+        raise ErrorCrealityPrint(f"{ruta} doesn't exist.")
     cmd = [str(cp.exe)]
     if en_ventana_abierta:
         cmd.append("--single-instance")
@@ -883,4 +890,4 @@ def abrir(cp: CrealityPrint, ruta: str | os.PathLike, en_ventana_abierta: bool =
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     subprocess.Popen(cmd, creationflags=flags, close_fds=True,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return "en la ventana abierta" if en_ventana_abierta else "en una ventana nueva"
+    return "in the open window" if en_ventana_abierta else "in a new window"

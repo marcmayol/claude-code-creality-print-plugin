@@ -23,8 +23,8 @@ def test_ranuras_malas(malo):
 
 
 def test_mapeo_legible():
-    assert imp._mapeo_legible({"id": "T1A", "boxId": 1, "materialId": 3}) == {"extrusor": 1, "ranura": "1D"}
-    assert imp._mapeo_legible({"id": "T2B", "boxId": 2, "materialId": 0}) == {"extrusor": 6, "ranura": "2A"}
+    assert imp._mapeo_legible({"id": "T1A", "boxId": 1, "materialId": 3}) == {"extruder": 1, "slot": "1D"}
+    assert imp._mapeo_legible({"id": "T2B", "boxId": 2, "materialId": 0}) == {"extruder": 6, "slot": "2A"}
 
 
 def test_modelos_incluyen_familia_k2_y_k1():
@@ -51,13 +51,13 @@ en_red = pytest.mark.skipif(K2 is None, reason="la K2 no está en la red")
 def test_estado_real():
     e = K2.estado()
     assert e["klipper"] in ("ready", "startup", "shutdown", "error")
-    assert e["estado"] in ("standby", "printing", "paused", "complete", "cancelled", "error")
+    assert e["state"] in ("standby", "printing", "paused", "complete", "cancelled", "error")
 
 
 @en_red
 def test_cfs_real():
     c = K2.cfs()
-    assert [r["ranura"] for r in c["ranuras"]][:4] == ["1A", "1B", "1C", "1D"]
+    assert [r["slot"] for r in c["slots"]][:4] == ["1A", "1B", "1C", "1D"]
 
 
 @en_red

@@ -32,7 +32,7 @@ def test_impresora_guardada_manda_sobre_creality_print(monkeypatch):
 
     monkeypatch.setattr(imp, "_hosts_de_creality_print", lambda: [("10.0.0.5", "F021")])
     monkeypatch.setattr(imp.httpx, "get", falso_get)
-    with pytest.raises(imp.ErrorImpresora, match="configurar_impresora"):
+    with pytest.raises(imp.ErrorImpresora, match="setup_printer"):
         imp.Impresora.detectar()
     assert "10.0.0.9" in probados[0] and "10.0.0.5" in probados[1]
 

@@ -68,11 +68,11 @@ def identificar(host: str) -> dict | None:
     modelo = imp.MODELOS.get(codigo)
     return {
         "host": host,
-        "nombre": info.get("hostname") or ws.get("hostname") or "",
-        "modelo_codigo": codigo,
-        "modelo": modelo[0] if modelo else None,
-        "cama_mm": modelo[1] if modelo else None,
-        "soportada": modelo is not None,
+        "name": info.get("hostname") or ws.get("hostname") or "",
+        "model_code": codigo,
+        "model": modelo[0] if modelo else None,
+        "bed_mm": modelo[1] if modelo else None,
+        "supported": modelo is not None,
     }
 
 
@@ -109,7 +109,7 @@ def buscar_impresoras() -> list[dict]:
     for host, _ in imp._hosts_de_creality_print():
         r = identificar(host)
         if r:
-            r["origen"] = "Creality Print"
+            r["found_in"] = "Creality Print"
             vistos[host] = r
     if vistos:
         return list(vistos.values())
@@ -120,6 +120,6 @@ def buscar_impresoras() -> list[dict]:
     for ip in abiertos:
         r = identificar(ip)
         if r:
-            r["origen"] = "red local"
+            r["found_in"] = "local network"
             vistos[ip] = r
     return list(vistos.values())

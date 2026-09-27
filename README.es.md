@@ -45,23 +45,24 @@ Si pruebas otra, abre un issue y cuéntalo.
 
 | Herramienta | Qué hace | ¿Mueve la impresora? |
 |---|---|---|
-| `configurar_impresora` | Busca la impresora (Creality Print o red local) y la guarda | no |
-| `ver_preconfiguracion`, `guardar_preconfiguracion` | Los `CREALITY.md` que aplican a un modelo; crearlos o cambiarlos | no |
-| `mis_notas`, `guardar_nota`, `borrar_nota` | Tus reglas, en el `CREALITY.md` global | no |
+| `setup_printer` | Busca la impresora (Creality Print o red local) y la guarda | no |
+| `get_presets`, `save_presets` | Los `CREALITY.md` que aplican a un modelo; crearlos o cambiarlos | no |
+| `list_notes`, `add_note`, `delete_note` | Tus reglas, en el `CREALITY.md` global | no |
 | `creality_print_info` | Instalación, versión, perfiles seleccionados, impresora de destino | no |
-| `listar_perfiles` | Perfiles de máquina, proceso o filamento (solo los de tu máquina) | no |
-| `ver_ajustes_perfil` | Claves y valores de un perfil ya resuelto | no |
-| `ver_objetos_3mf`, `preparar_multicolor` | Objetos de un 3MF; colores por objeto y por altura | no |
-| `laminar` | Lamina y revisa; también mezclas. Devuelve `apto`, problemas, tiempo, gramos, extrusores | no |
-| `analizar_gcode` | Revisa un gcode local o de la impresora | no |
-| `abrir_en_creality_print` | Abre un archivo en una ventana para mirarlo | no |
-| `estado_impresora`, `estado_cfs`, `archivos_impresora`, `historial_impresora` | Lectura | no |
-| `subir_gcode` | Sube un gcode ya revisado, sin imprimirlo | no |
-| `imprimir` | Lanza la impresión con las ranuras del CFS o la bobina externa | **sí** (pide `confirmacion` = nombre) |
-| `controlar_impresion` | Pausar, reanudar, cancelar | **sí** (cancelar pide `confirmacion`) |
+| `list_profiles` | Perfiles de máquina, proceso o filamento (solo los de tu máquina) | no |
+| `get_profile_settings` | Claves y valores de un perfil ya resuelto | no |
+| `list_3mf_objects`, `prepare_multicolor` | Objetos de un 3MF; colores por objeto y por altura | no |
+| `slice` | Lamina y revisa; también mezclas. Devuelve `ok_to_print`, problemas, tiempo, gramos, extrusores | no |
+| `analyze_gcode` | Revisa un gcode local o de la impresora | no |
+| `open_in_creality_print` | Abre un archivo en una ventana para mirarlo | no |
+| `printer_status`, `cfs_status`, `printer_files`, `print_history` | Lectura | no |
+| `upload_gcode` | Sube un gcode ya revisado, sin imprimirlo | no |
+| `start_print` | Lanza la impresión con las ranuras del CFS o la bobina externa | **sí** (pide `confirm` = nombre) |
+| `control_print` | Pausar, reanudar, cancelar | **sí** (cancelar pide `confirm`) |
 
 La skill `creality-print` le explica a Claude cómo usarlas y le prohíbe lanzar o cancelar
-nada sin preguntar antes.
+nada sin preguntar antes. Las herramientas y la skill están en inglés, que es como mejor las
+entiende Claude, pero te contesta en español.
 
 ## Instalar
 
@@ -83,7 +84,7 @@ impresora?», «¿qué hay en el CFS?», «haz la base blanca y las letras negra
 ## Colores
 
 - **Un filamento por objeto**: «el texto en negro y la base en blanco». Claude mira los
-  objetos con `ver_objetos_3mf` y los asigna con `preparar_multicolor`.
+  objetos con `list_3mf_objects` y los asigna con `prepare_multicolor`.
 - **Cambio de filamento por altura**: «hasta 3 mm blanco y luego negro». Vale también para
   un STL de una pieza: el relieve sale de otro color.
 - **Mezclas** de Creality Print 7: filamentos virtuales que alternan dos físicos por capas o
@@ -96,7 +97,7 @@ impresora?», «¿qué hay en el CFS?», «haz la base blanca y las letras negra
 
 El plugin no lleva nada tuyo dentro: lo que necesita lo averigua y lo guarda en tu PC.
 
-- **La impresora.** La primera vez, `configurar_impresora` prueba las que tiene Creality
+- **La impresora.** La primera vez, `setup_printer` prueba las que tiene Creality
   Print y, si no responde ninguna, escanea tu red local (puertos 9999 y 7125). Guarda su IP
   y su modelo en `%APPDATA%\creality-print-plugin\config.json`; el modelo es lo que se usa
   para comprobar la cama. Si un día cambia de IP, se vuelve a llamar.
@@ -106,28 +107,30 @@ El plugin no lleva nada tuyo dentro: lo que necesita lo averigua y lo guarda en 
 
 ```markdown
 ---
-proceso: 0.16mm Standard @Creality K2 0.4 nozzle
-filamentos: [Hyper PLA @Creality K2 0.4 nozzle]
-ajustes:
+process: 0.16mm Standard @Creality K2 0.4 nozzle
+filaments: [Hyper PLA @Creality K2 0.4 nozzle]
+settings:
   wall_loops: 4
   brim_type: outer_only
-carpeta_salida: gcode
-ranuras: {"1": 1D}
+output_dir: gcode
+slots: {"1": 1D}
 ---
 # Soportes para la pared
 Todo en PLA negro. Las piezas de exterior, con 4 paredes.
 ```
 
 - **Global**, en `%APPDATA%\creality-print-plugin\CREALITY.md`: vale siempre. Su sección
-  `## Notas` la rellena `guardar_nota` («mi ABS va a 270 °C», «brim en piezas altas»).
+  `## Notes` (o `## Notas`) la rellena `add_note` («mi ABS va a 270 °C», «brim en piezas altas»).
 - **De proyecto**, en la carpeta de los modelos o en cualquiera de las de encima: vale para
   lo que haya dentro.
 - Manda el más cercano al modelo, y lo que pidas en la conversación manda sobre todos. Los
-  `ajustes` se suman de un nivel a otro.
-- Claves: `maquina`, `proceso`, `filamentos`, `ajustes`, `carpeta_salida` (relativa al
-  archivo) y `ranuras` (las que Claude propondrá al imprimir; igualmente te pregunta).
+  `settings` se suman de un nivel a otro.
+- Claves: `machine`, `process`, `filaments` (un perfil por extrusor), `settings` (claves del
+  perfil a cambiar), `output_dir` (relativa al archivo) y `slots` (las ranuras que Claude
+  propondrá al imprimir; igualmente te pregunta). Las claves en español de la primera versión
+  (`maquina`, `proceso`, `ajustes`…) siguen funcionando.
 - Se puede editar a mano o pedírselo a Claude («para esta carpeta usa 0,16 mm y brim»), que
-  usa `guardar_preconfiguracion` y comprueba antes que los perfiles existen, que son de tu
+  usa `save_presets` y comprueba antes que los perfiles existen, que son de tu
   impresora y que los ajustes son claves reales.
 
 Variables opcionales, por si prefieres fijarlo a mano:
@@ -171,7 +174,7 @@ solo leen: ningún test sube, imprime ni pausa nada.
 ## Estado y límites
 
 - Probado con una K2 (base, 260 mm) con un CFS; el resto de modelos, sin probar.
-- **Lanzar trabajos con `imprimir` todavía no está verificado en una impresión real.** El
+- **Lanzar trabajos con `start_print` todavía no está verificado en una impresión real.** El
   protocolo sale del código de Creality Print y del mapeo que la K2 guarda de sus trabajos.
 - Creality Print 7.3 cambia la CLI (`--cli`, solo `slice`). El plugin antepone `--cli` si
   detecta la 7.3, pero no está probado.
