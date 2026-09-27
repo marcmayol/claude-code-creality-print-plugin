@@ -14,7 +14,7 @@
     "klipper",
     "moonraker"
   ],
-  "homepage": "https://github.com/marcmayol/creality-print-plugin",
-  "repository": "https://github.com/marcmayol/creality-print-plugin",
+  "homepage": "https://github.com/marcmayol/claude-creality-print",
+  "repository": "https://github.com/marcmayol/claude-creality-print",
   "license": "MIT"
 }

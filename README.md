@@ -56,7 +56,7 @@ Requisitos:
 - La impresora añadida en Creality Print (pestaña Dispositivo), o la variable `K2_HOST`.
 
 ```powershell
-claude plugin marketplace add marcmayol/creality-print-plugin
+claude plugin marketplace add marcmayol/claude-creality-print
 claude plugin install creality-print@marc-3d
 ```
 
