@@ -1,7 +1,7 @@
 {
   "name": "creality-print",
   "version": "0.3.0",
-  "description": "Laminar con Creality Print por CLI, revisar el gcode contra la cama real, colores (por objeto, por altura y mezclas) y manejar impresoras Creality con Creality OS (K2, K1…): estado, CFS, subir e imprimir, desde Claude Code.",
+  "description": "Slice with Creality Print's CLI, check gcode against the real bed, handle colours (per object, by height, mixed filaments) and run Creality OS printers (K2, K1…): status, CFS, upload and print — from Claude Code.",
   "author": {
     "name": "Marc Mayol",
     "url": "https://github.com/marcmayol"
