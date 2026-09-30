@@ -174,10 +174,14 @@ printer tests only read: no test uploads, prints or pauses anything.
 ## Status and limits
 
 - Tested on a K2 (base model, 260 mm) with one CFS; other models are untested.
-- **Starting jobs with `start_print` hasn't been verified on a real print yet.** The protocol comes
+- `start_print` has started real prints on the K2 with a CFS slot mapping. The protocol comes
   from Creality Print's code and from the slot mapping the K2 stores for its jobs.
-- Creality Print 7.3 changes the CLI (`--cli`, `slice` only). The plugin adds `--cli` when it
-  detects 7.3, but that isn't tested.
+- Creality Print 7.3 changes the CLI: it needs `--cli`, and `--need-gcode-file`, without which it
+  slices, exits with code 0 and deletes the gcode. The plugin adds both when it detects 7.3
+  (tested on 7.3.0.6151).
+- **Known issue on 7.3: mixed filaments (`mixes`) don't slice.** Creality Print loads the mix but
+  still writes the virtual extruder (`Invalid T command (T2)`) and aborts with code -100. They
+  worked on 7.2.
 
 Personal project, not affiliated with Creality. Creality and Creality Print are trademarks of
 Shenzhen Creality 3D Technology. Printing moves a machine with hot parts: check what you send.

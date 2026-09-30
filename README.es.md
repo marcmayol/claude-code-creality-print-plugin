@@ -174,10 +174,14 @@ solo leen: ningún test sube, imprime ni pausa nada.
 ## Estado y límites
 
 - Probado con una K2 (base, 260 mm) con un CFS; el resto de modelos, sin probar.
-- **Lanzar trabajos con `start_print` todavía no está verificado en una impresión real.** El
+- `start_print` ya ha lanzado impresiones reales en la K2 con el mapeo de ranuras del CFS. El
   protocolo sale del código de Creality Print y del mapeo que la K2 guarda de sus trabajos.
-- Creality Print 7.3 cambia la CLI (`--cli`, solo `slice`). El plugin antepone `--cli` si
-  detecta la 7.3, pero no está probado.
+- Creality Print 7.3 cambia la CLI: pide `--cli` y `--need-gcode-file`, sin el cual lamina, sale
+  con código 0 y borra el gcode. El plugin antepone los dos si detecta la 7.3 (probado en la
+  7.3.0.6151).
+- **Fallo conocido en la 7.3: los filamentos mezclados (`mixes`) no laminan.** Creality Print
+  carga la mezcla pero sigue escribiendo el extrusor virtual (`Invalid T command (T2)`) y aborta
+  con código -100. En la 7.2 funcionaban.
 
 Proyecto personal, sin relación con Creality. Creality y Creality Print son marcas de
 Shenzhen Creality 3D Technology. Imprimir mueve una máquina con piezas calientes: revisa lo
