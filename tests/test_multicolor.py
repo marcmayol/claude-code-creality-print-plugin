@@ -67,6 +67,8 @@ def test_cambio_de_color_por_altura_en_un_stl(tmp_path):
 
 
 @instalado
+@pytest.mark.xfail(CP is not None and cpm._version_tupla(CP.version) >= (7, 3), strict=True,
+                   reason="Creality Print 7.3 escribe el extrusor virtual (T2) y aborta con -100")
 def test_objeto_en_una_mezcla_alterna_capas(tmp_path):
     r = cpm.preparar_multicolor(cubo_stl(tmp_path / "cubo.stl"), asignar={"cubo": 3})
     res = cpm.laminar(CP, r["file"], MAQUINA, PROCESO, [FILAMENTO, NEGRO], mezclas=[{"a": 1, "b": 2}],

@@ -11,7 +11,8 @@ tres manías comprobadas en la 7.2.2:
 - Es una aplicación de ventana: no escribe nada útil por consola. Lo que pasa se
   sabe por el código de salida, `--logfile` y los ficheros que deja.
 
-Desde la 7.3 hay que anteponer `--cli`.
+Desde la 7.3 hay que anteponer `--cli` y pedir el gcode con `--need-gcode-file`:
+sin él lamina bien, sale con código 0 y borra el gcode.
 """
 from __future__ import annotations
 
@@ -697,7 +698,9 @@ def laminar(
 
     trabajo = Path(tempfile.mkdtemp(prefix="cp_laminar_", dir=salida))
     log = trabajo / "creality_print.log"
-    cmd = [str(cp.exe), *cp.prefijo_cli, "--slice", str(placa), "--outputdir", str(trabajo),
+    # La 7.3 lamina pero borra el gcode al acabar si no se le pide con --need-gcode-file.
+    pide_gcode = ["--need-gcode-file"] if cp.prefijo_cli else []
+    cmd = [str(cp.exe), *cp.prefijo_cli, *pide_gcode, "--slice", str(placa), "--outputdir", str(trabajo),
            "--logfile", str(log), "--debug", "3"]
     if es_3mf:
         cmd.append("--allow-newer-file")
