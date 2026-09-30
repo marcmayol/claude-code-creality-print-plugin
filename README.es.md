@@ -178,7 +178,8 @@ solo leen: ningún test sube, imprime ni pausa nada.
   protocolo sale del código de Creality Print y del mapeo que la K2 guarda de sus trabajos.
 - Creality Print 7.3 cambia la CLI: pide `--cli` y `--need-gcode-file`, sin el cual lamina, sale
   con código 0 y borra el gcode. El plugin antepone los dos si detecta la 7.3 (probado en la
-  7.3.0.6151).
+  7.3.0.6151). La 7.3 tampoco admite `--load-settings` con un proyecto 3MF, así que el plugin
+  mete los perfiles elegidos en una copia del proyecto.
 - **Fallo conocido en la 7.3: los filamentos mezclados (`mixes`) no laminan.** Creality Print
   carga la mezcla pero sigue escribiendo el extrusor virtual (`Invalid T command (T2)`) y aborta
   con código -100. En la 7.2 funcionaban.

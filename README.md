@@ -178,7 +178,8 @@ printer tests only read: no test uploads, prints or pauses anything.
   from Creality Print's code and from the slot mapping the K2 stores for its jobs.
 - Creality Print 7.3 changes the CLI: it needs `--cli`, and `--need-gcode-file`, without which it
   slices, exits with code 0 and deletes the gcode. The plugin adds both when it detects 7.3
-  (tested on 7.3.0.6151).
+  (tested on 7.3.0.6151). 7.3 also refuses `--load-settings` with a 3MF project, so the
+  plugin writes the chosen profiles into a copy of the project instead.
 - **Known issue on 7.3: mixed filaments (`mixes`) don't slice.** Creality Print loads the mix but
   still writes the virtual extruder (`Invalid T command (T2)`) and aborts with code -100. They
   worked on 7.2.

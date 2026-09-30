@@ -12,7 +12,8 @@ tres manías comprobadas en la 7.2.2:
   sabe por el código de salida, `--logfile` y los ficheros que deja.
 
 Desde la 7.3 hay que anteponer `--cli` y pedir el gcode con `--need-gcode-file`:
-sin él lamina bien, sale con código 0 y borra el gcode.
+sin él lamina bien, sale con código 0 y borra el gcode. Con un proyecto 3MF, además,
+no admite --load-settings: los perfiles se meten dentro del propio 3MF.
 """
 from __future__ import annotations
 
@@ -404,6 +405,38 @@ def preparar_3mf_plano(ruta: Path, destino: Path, cama: tuple[float, float]) -> 
 
 # ---------------------------------------------------------------- multicolor
 
+_CLAVES_DE_PERFIL = {"name", "inherits", "from", "setting_id", "instantiation", "version", "type", "filament_id"}
+
+
+def meter_perfiles_en_3mf(origen: Path, destino: Path, planos: dict[str, list[dict]]) -> None:
+    """Copia el 3MF con los perfiles aplanados dentro de `Metadata/project_settings.config`.
+
+    Es lo que hace falta en la 7.3, que rechaza --load-settings/--load-filaments con un
+    proyecto ("cannot be used when slicing a 3MF project"). Máquina y proceso van tal cual;
+    cada clave de filamento se convierte en una lista con un valor por filamento.
+    """
+    with zipfile.ZipFile(origen) as z:
+        nombres = z.namelist()
+        ajustes = json.loads(z.read("Metadata/project_settings.config")) \
+            if "Metadata/project_settings.config" in nombres else {}
+        for tipo in ("machine", "process"):
+            for k, v in planos[tipo][0].items():
+                if k not in _CLAVES_DE_PERFIL:
+                    ajustes[k] = v
+        filamentos = planos["filament"]
+        for k in {k for f in filamentos for k in f} - _CLAVES_DE_PERFIL:
+            ajustes[k] = [(f[k][0] if isinstance(f.get(k), list) and f[k] else f.get(k, ""))
+                          for f in filamentos]
+        ajustes.update(printer_settings_id=planos["machine"][0]["name"],
+                       print_settings_id=planos["process"][0]["name"],
+                       filament_settings_id=[f["name"] for f in filamentos])
+        with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as out:
+            for info in z.infolist():
+                if info.filename != "Metadata/project_settings.config":
+                    out.writestr(info, z.read(info.filename))
+            out.writestr("Metadata/project_settings.config", json.dumps(ajustes, indent=4, ensure_ascii=False))
+
+
 def stl_a_3mf(stl: Path, destino: Path) -> Path:
     """Un STL (binario o ASCII) como 3MF plano de un objeto, para poder darle colores."""
     import struct
@@ -768,15 +801,22 @@ def laminar(
                                       f"({m.get('mode', m.get('modo', 'layers'))}, "
                                       f"{m.get('percent_b', m.get('porcentaje_b', 50))} % of {m.get('b', 2)})"
                                         for i, m in enumerate(mezclas, start=1)))
-        rutas = {}
-        for tipo, lista in planos.items():
-            rutas[tipo] = []
-            for i, p in enumerate(lista):
-                f = trabajo / f"{tipo}_{i}.json"
-                f.write_text(json.dumps(p, ensure_ascii=False, indent=1), encoding="utf-8")
-                rutas[tipo].append(str(f))
-        cmd += ["--load-settings", ";".join(rutas["machine"] + rutas["process"]),
-                "--load-filaments", ";".join(rutas["filament"])]
+        if es_3mf and cp.prefijo_cli:
+            # La 7.3 no admite --load-settings con un proyecto 3MF: los perfiles van dentro.
+            origen = trabajo / "modelo.3mf" if preparado and preparado.get("centrado") else modelo
+            meter_perfiles_en_3mf(origen, trabajo / "perfiles.3mf", planos)
+            preparado = {"centrado": True}
+            os.replace(trabajo / "perfiles.3mf", trabajo / "modelo.3mf")
+        else:
+            rutas = {}
+            for tipo, lista in planos.items():
+                rutas[tipo] = []
+                for i, p in enumerate(lista):
+                    f = trabajo / f"{tipo}_{i}.json"
+                    f.write_text(json.dumps(p, ensure_ascii=False, indent=1), encoding="utf-8")
+                    rutas[tipo].append(str(f))
+            cmd += ["--load-settings", ";".join(rutas["machine"] + rutas["process"]),
+                    "--load-filaments", ";".join(rutas["filament"])]
         res.perfiles = {"source": "given", "machine": maquina, "process": proceso, "filaments": filamentos}
     if colocar:
         cmd += ["--arrange", "1"]

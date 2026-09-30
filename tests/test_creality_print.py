@@ -162,6 +162,82 @@ def test_laminar_3mf_plano_bicolor(tmp_path):
     assert any("centred" in a for a in res.avisos)
 
 
+def test_meter_perfiles_en_3mf(tmp_path):
+    ruta = _3mf_plano(tmp_path / "a.3mf")
+    with zipfile.ZipFile(ruta, "a") as z:
+        z.writestr("Metadata/project_settings.config",
+                   '{"printer_settings_id": "Creality K2 Plus 0.4 nozzle", "filament_colour": ["#FF0000", "#00FF00"],'
+                   ' "clave_del_proyecto": "se queda"}')
+    planos = {"machine": [{"name": "M", "inherits": "", "printable_area": ["0x0", "260x0"]}],
+              "process": [{"name": "P", "wall_loops": "3"}],
+              "filament": [{"name": "F1", "nozzle_temperature": ["220"], "filament_colour": ["#FF0000"]},
+                           {"name": "F2", "nozzle_temperature": ["230"], "filament_colour": ["#00FF00"]}]}
+    cpm.meter_perfiles_en_3mf(ruta, tmp_path / "b.3mf", planos)
+    with zipfile.ZipFile(tmp_path / "b.3mf") as z:
+        ajustes = __import__("json").loads(z.read("Metadata/project_settings.config"))
+        assert "3D/3dmodel.model" in z.namelist()
+    assert ajustes["printer_settings_id"] == "M" and ajustes["print_settings_id"] == "P"
+    assert ajustes["filament_settings_id"] == ["F1", "F2"]
+    assert ajustes["printable_area"] == ["0x0", "260x0"] and ajustes["wall_loops"] == "3"
+    assert ajustes["nozzle_temperature"] == ["220", "230"]
+    assert ajustes["filament_colour"] == ["#FF0000", "#00FF00"]
+    assert ajustes["clave_del_proyecto"] == "se queda"
+    assert "inherits" not in ajustes
+
+
+def _proyecto_creality(ruta, lado=20.0):
+    """Un proyecto como los que guarda Creality Print: objeto con componentes, model_settings y placa."""
+    h = lado / 2
+    v = [(x, y, z) for x in (-h, h) for y in (-h, h) for z in (-h, h)]
+    caras = [(0, 1, 3), (0, 3, 2), (4, 6, 7), (4, 7, 5), (0, 4, 5), (0, 5, 1),
+             (2, 3, 7), (2, 7, 6), (0, 2, 6), (0, 6, 4), (1, 5, 7), (1, 7, 3)]
+    ns = ('xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
+          'xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" '
+          'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p"')
+    malla = ("".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in v),
+             "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in caras))
+    with zipfile.ZipFile(ruta, "w") as z:
+        z.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                   '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>')
+        z.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+        z.writestr("3D/_rels/3dmodel.model.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Target="/3D/Objects/object_1.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+        z.writestr("3D/Objects/object_1.model", f'<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" {ns}>'
+                   '<metadata name="BambuStudio:3mfVersion">1</metadata><resources><object id="1" type="model">'
+                   f'<mesh><vertices>{malla[0]}</vertices><triangles>{malla[1]}</triangles></mesh></object></resources><build/></model>')
+        z.writestr("3D/3dmodel.model", f'<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" {ns}>'
+                   '<metadata name="Application">Creality_Print V7.3.0.6151 Release</metadata>'
+                   '<metadata name="BambuStudio:3mfVersion">1</metadata><resources><object id="2" type="model"><components>'
+                   '<component p:path="/3D/Objects/object_1.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>'
+                   f'</components></object></resources><build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 175 175 {h}" printable="1"/></build></model>')
+        z.writestr("Metadata/model_settings.config", '<?xml version="1.0" encoding="UTF-8"?><config><object id="2">'
+                   '<metadata key="name" value="cubo"/><metadata key="extruder" value="1"/>'
+                   '<part id="1" subtype="normal_part"><metadata key="name" value="cubo"/></part></object>'
+                   '<plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="2"/>'
+                   '<metadata key="instance_id" value="0"/></model_instance></plate></config>')
+    return ruta
+
+
+@instalado
+def test_laminar_proyecto_de_otra_maquina_impone_la_k2(tmp_path):
+    # Un 3MF de proyecto trae la máquina de quien lo subió (aquí una K2 Plus, cama de 350).
+    # La 7.3 no admite --load-settings con un proyecto, así que la K2 tiene que ir dentro.
+    plus = {"machine": [CP.resolver_perfil("machine", "Creality K2 Plus 0.4 nozzle")],
+            "process": [CP.resolver_perfil("process", "0.20mm Standard @Creality K2 Plus 0.4 nozzle")],
+            "filament": [CP.resolver_perfil("filament", "Hyper PLA @Creality K2 Plus 0.4 nozzle")]}
+    ruta = tmp_path / "proyecto.3mf"
+    cpm.meter_perfiles_en_3mf(_proyecto_creality(tmp_path / "base.3mf"), ruta, plus)
+    res = cpm.laminar(CP, ruta, MAQUINA, PROCESO, [FILAMENTO], ajustes={"wall_loops": 4},
+                      modelo_esperado="Creality K2", cama=(260, 260, 260))
+    g = res.gcodes[0]
+    assert g["ok_to_print"], g["problems"]
+    assert g["printer_model"] == "Creality K2"
+    assert g["machine_profile"] == MAQUINA
+    assert gcode.analizar(g["file"]).valor("wall_loops") == "4"
+
+
 @instalado
 def test_error_de_laminado_no_deja_basura(tmp_path):
     malo = tmp_path / "roto.stl"
