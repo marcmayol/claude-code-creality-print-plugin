@@ -372,11 +372,26 @@ def list_3mf_objects(model: str) -> dict:
 
 
 @mcp.tool()
+def analyze_heights(model: str) -> dict:
+    """Where each object's top surfaces sit (height and area), to pick a colour change.
+
+    For a relief in two colours (a HueForge, a sign) the background is the lowest large top
+    surface and the change goes right there: `suggested_change_z`. Changing higher up leaves
+    the top colour as a thin, washed-out skin over the bottom one.
+    """
+    try:
+        return {"objects": cpm.analizar_alturas(model)}
+    except (cpm.ErrorCrealityPrint, OSError, KeyError, ValueError, zipfile.BadZipFile) as e:
+        return _error(e)
+
+
+@mcp.tool()
 def prepare_multicolor(
     model: str,
     assign: dict[str, int] | None = None,
     height_changes: list[dict] | None = None,
     output: str | None = None,
+    parts: bool = True,
 ) -> dict:
     """Build a multicolour 3MF from an STL or a 3MF, leaving the original untouched.
 
@@ -385,6 +400,11 @@ def prepare_multicolor(
       (with 2 filaments, mix 1 is extruder 3).
     - height_changes: [{"z": 10, "extruder": 2}] switches filament at that height: a base in
       one colour and the raised part in another, like signs and colour lithophanes.
+      "z": "auto" measures it per object, right above a relief's background (HueForge).
+      Written as height-range modifiers; any per-layer tool changes the 3MF had are dropped.
+    - parts: also add a solid block below each change with the lower filament, so Creality
+      Print's Prepare view shows the colours (ranges alone only show in Preview). Only for
+      objects that sit on a rectangle; otherwise `warnings` says so and it still prints right.
 
     It can't paint individual faces: that's done by hand in Creality Print. Returns the new
     3MF; then `slice` it with one filament per extruder (and `mixes` if there are virtual ones).
@@ -392,7 +412,7 @@ def prepare_multicolor(
     target = target_machine()
     try:
         return cpm.preparar_multicolor(model, assign, height_changes, output,
-                                       target[1][:2] if target else (260, 260))
+                                       target[1][:2] if target else (260, 260), partes=parts)
     except (cpm.ErrorCrealityPrint, OSError, KeyError, ValueError, zipfile.BadZipFile) as e:
         return _error(e)
 

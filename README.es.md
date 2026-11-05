@@ -51,7 +51,7 @@ Si pruebas otra, abre un issue y cuéntalo.
 | `creality_print_info` | Instalación, versión, perfiles seleccionados, impresora de destino | no |
 | `list_profiles` | Perfiles de máquina, proceso o filamento (solo los de tu máquina) | no |
 | `get_profile_settings` | Claves y valores de un perfil ya resuelto | no |
-| `list_3mf_objects`, `prepare_multicolor` | Objetos de un 3MF; colores por objeto y por altura | no |
+| `list_3mf_objects`, `analyze_heights`, `prepare_multicolor` | Objetos de un 3MF y sus caras de arriba; colores por objeto y por altura | no |
 | `slice` | Lamina y revisa; también mezclas. Devuelve `ok_to_print`, problemas, tiempo, gramos, extrusores | no |
 | `analyze_gcode` | Revisa un gcode local o de la impresora | no |
 | `open_in_creality_print` | Abre un archivo en una ventana para mirarlo | no |
@@ -86,7 +86,10 @@ impresora?», «¿qué hay en el CFS?», «haz la base blanca y las letras negra
 - **Un filamento por objeto**: «el texto en negro y la base en blanco». Claude mira los
   objetos con `list_3mf_objects` y los asigna con `prepare_multicolor`.
 - **Cambio de filamento por altura**: «hasta 3 mm blanco y luego negro». Vale también para
-  un STL de una pieza: el relieve sale de otro color.
+  un STL de una pieza: el relieve sale de otro color. Si la pieza apoya en un rectángulo, se
+  añade un bloque con el filamento de abajo para que «Preparar» enseñe los dos colores.
+- **HueForge de dos colores**: `analyze_heights` enseña las caras de arriba de cada objeto y
+  `"z": "auto"` pone el cambio justo encima del fondo, que es donde va.
 - **Mezclas** de Creality Print 7: filamentos virtuales que alternan dos físicos por capas o
   con tramado, para sacar un tercer tono. Con N filamentos, la mezcla 1 es el extrusor N+1.
   Cada cambio purga, así que tarda y gasta bastante más.
@@ -151,7 +154,10 @@ Variables opcionales, por si prefieres fijarlo a mano:
   - A los 3MF "planos" (sin datos de Creality) los centra en la cama y les asigna un
     extrusor por material, que es lo que haría la ventana.
   - Colores: el extrusor de cada objeto va en `Metadata/model_settings.config`, los cambios
-    por altura en `Metadata/custom_gcode_per_layer.xml` y las mezclas en
+    por altura como modificadores de rango de altura en `Metadata/layer_config_ranges.xml`
+    y, en piezas que apoyan en un rectángulo, un bloque como parte con el filamento de abajo
+    (donde dos partes se solapan gana la que va después; así «Preparar» enseña los colores) y
+    las mezclas en
     `mixed_filament_definitions` (formato de `MixedFilament.cpp` de Creality Print 7.2).
 - `gcode.py`: revisa el gcode. Solo cuenta los movimientos de las capas: la purga del
   arranque y la rampa de desecho del cambio de color son de la máquina.

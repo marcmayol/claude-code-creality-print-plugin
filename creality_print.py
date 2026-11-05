@@ -308,8 +308,10 @@ def info_3mf(ruta: Path) -> dict:
         # extrusores piden sus objetos y sus cambios por altura.
         with zipfile.ZipFile(ruta) as z:
             textos = [z.read(n).decode("utf-8", "replace") for n in
-                      ("Metadata/model_settings.config", "Metadata/custom_gcode_per_layer.xml") if n in nombres]
-        usados = [int(v) for t in textos for v in re.findall(r'(?:key="extruder" value|extruder)="(\d+)"', t)]
+                      ("Metadata/model_settings.config", "Metadata/custom_gcode_per_layer.xml",
+                       "Metadata/layer_config_ranges.xml") if n in nombres]
+        usados = [int(v) for t in textos for v in
+                  re.findall(r'(?:key="extruder" value="|extruder="|opt_key="extruder">)(\d+)', t)]
         filamentos = [""] * max(usados, default=1)
     return {
         "aplicacion": aplicacion,
@@ -419,6 +421,8 @@ def meter_perfiles_en_3mf(origen: Path, destino: Path, planos: dict[str, list[di
         nombres = z.namelist()
         ajustes = json.loads(z.read("Metadata/project_settings.config")) \
             if "Metadata/project_settings.config" in nombres else {}
+        cama_vieja = _rectangulo(ajustes.get("printable_area"))
+        cama_nueva = _rectangulo(planos["machine"][0].get("printable_area"))
         for tipo in ("machine", "process"):
             for k, v in planos[tipo][0].items():
                 if k not in _CLAVES_DE_PERFIL:
@@ -430,11 +434,101 @@ def meter_perfiles_en_3mf(origen: Path, destino: Path, planos: dict[str, list[di
         ajustes.update(printer_settings_id=planos["machine"][0]["name"],
                        print_settings_id=planos["process"][0]["name"],
                        filament_settings_id=[f["name"] for f in filamentos])
+        # Un 3MF de otra máquina guarda de qué perfiles de sistema heredaba (proceso,
+        # filamentos…, máquina). Si se queda, la CLI vuelve a cargar esa máquina (una K2 Pro,
+        # cama de 300) por encima de lo que se acaba de meter: los perfiles van ya aplanados.
+        ajustes["inherits_group"] = [""] * (len(filamentos) + 2)
+        ajustes["print_compatible_printers"] = [planos["machine"][0]["name"]]
+        mover = bool(cama_vieja and cama_nueva and cama_vieja != cama_nueva)
+        if mover:
+            _torre_dentro(ajustes, cama_vieja, cama_nueva)
+        capa = _a_texto(planos["process"][0].get("layer_height", "")) or _a_texto(ajustes.get("layer_height", ""))
         with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as out:
             for info in z.infolist():
-                if info.filename != "Metadata/project_settings.config":
-                    out.writestr(info, z.read(info.filename))
+                if info.filename == "Metadata/project_settings.config":
+                    continue
+                datos = z.read(info.filename)
+                if mover and info.filename == "3D/3dmodel.model":
+                    datos = _recolocar_items(datos.decode("utf-8"), cama_vieja, cama_nueva).encode("utf-8")
+                elif info.filename == "Metadata/layer_config_ranges.xml" and capa:
+                    datos = _rangos_con_capa(datos.decode("utf-8"), capa).encode("utf-8")
+                out.writestr(info, datos)
             out.writestr("Metadata/project_settings.config", json.dumps(ajustes, indent=4, ensure_ascii=False))
+
+
+def _rectangulo(area) -> tuple[float, float, float, float] | None:
+    """printable_area ("0x0,260x0,…" o lista) -> (xmin, ymin, xmax, ymax)."""
+    if isinstance(area, str):
+        area = area.split(",")
+    try:
+        puntos = [tuple(float(c) for c in p.split("x")) for p in area or []]
+    except (ValueError, AttributeError):
+        return None
+    if len(puntos) < 3:
+        return None
+    xs, ys = [p[0] for p in puntos], [p[1] for p in puntos]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+# Creality Print pone las placas en rejilla, cada una a 1,2 veces el tamaño de la cama.
+_PASO_PLACA = 1.2
+
+
+def _recolocar_items(modelo: str, vieja: tuple, nueva: tuple) -> str:
+    """Lleva cada objeto de la cama vieja a la nueva conservando su sitio respecto al centro.
+
+    Un proyecto de una K2 Pro (cama de 300) trae la pieza centrada en 150,150; en una K2
+    (260) el centro es 130,130 y, sin moverla, una pieza grande o la torre se salen.
+    """
+    def nuevo_valor(v: float, eje: int) -> float:
+        a0, a1, b0, b1 = vieja[eje], vieja[eje + 2], nueva[eje], nueva[eje + 2]
+        paso_a, paso_b = (a1 - a0) * _PASO_PLACA, (b1 - b0) * _PASO_PLACA
+        placa = (v - a0) // paso_a  # en qué placa de la rejilla cae
+        relativo = v - placa * paso_a - (a0 + a1) / 2
+        return placa * paso_b + (b0 + b1) / 2 + relativo
+
+    def cambiar(m: re.Match) -> str:
+        nums = m.group(2).split()
+        if len(nums) != 12:
+            return m.group(0)
+        nums[9] = f"{nuevo_valor(float(nums[9]), 0):.6g}"
+        nums[10] = f"{nuevo_valor(float(nums[10]), 1):.6g}"
+        return m.group(1) + " ".join(nums) + m.group(3)
+
+    return re.sub(r'(<item\s[^>]*?transform=")([^"]*)(")', cambiar, modelo)
+
+
+def _torre_dentro(ajustes: dict, vieja: tuple, nueva: tuple) -> None:
+    """La torre de purga, en la misma proporción de la cama nueva y sin salirse."""
+    try:
+        ancho = float(_a_texto(ajustes.get("prime_tower_width", "35")) or 35)
+    except ValueError:
+        ancho = 35.0
+    for clave, eje in (("wipe_tower_x", 0), ("wipe_tower_y", 1)):
+        valores = ajustes.get(clave)
+        if not valores:
+            continue
+        lista = valores if isinstance(valores, list) else [valores]
+        salida = []
+        for v in lista:
+            try:
+                f = (float(v) - vieja[eje]) / (vieja[eje + 2] - vieja[eje])
+            except (ValueError, ZeroDivisionError):
+                salida.append(v)
+                continue
+            n = nueva[eje] + f * (nueva[eje + 2] - nueva[eje])
+            n = max(nueva[eje] + 5, min(n, nueva[eje + 2] - ancho - 5))
+            salida.append(f"{n:.3f}")
+        ajustes[clave] = salida if isinstance(valores, list) else salida[0]
+
+
+def _rangos_con_capa(xml: str, capa: str) -> str:
+    """Creality Print se cae (0xC0000005) si un rango de altura no lleva layer_height."""
+    def completar(m: re.Match) -> str:
+        if 'opt_key="layer_height"' in m.group(0):
+            return m.group(0)
+        return m.group(0).replace("</range>", f' <option opt_key="layer_height">{capa}</option>\n  </range>')
+    return re.sub(r"<range [^>]*>.*?</range>", completar, xml, flags=re.S)
 
 
 def stl_a_3mf(stl: Path, destino: Path) -> Path:
@@ -523,6 +617,306 @@ def _poner_extrusor(config: str, oid: str, nombre: str, extrusor: int) -> str:
         cuerpo = f'\n    <metadata key="extruder" value="{extrusor}"/>' + cuerpo
     return config[:m.start()] + m.group(1) + cuerpo + m.group(3) + config[m.end():]
 
+_ALTURA_TOPE = 1000.0  # el último rango llega hasta aquí: más alto que cualquier impresora
+
+
+def _leer_rangos(xml: str) -> dict[str, list[dict]]:
+    """layer_config_ranges.xml -> {id de objeto: [{"min": z, "max": z, "opciones": {...}}]}."""
+    rangos: dict[str, list[dict]] = {}
+    for oid, cuerpo in re.findall(r'<object id="(\d+)">(.*?)</object>', xml, re.S):
+        for zmin, zmax, ops in re.findall(r'<range min_z="([^"]+)" max_z="([^"]+)">(.*?)</range>', cuerpo, re.S):
+            rangos.setdefault(oid, []).append({
+                "min": float(zmin), "max": float(zmax),
+                "opciones": dict(re.findall(r'<option opt_key="([^"]+)">([^<]*)</option>', ops))})
+    return rangos
+
+
+def _rangos_con_extrusor(existentes: list[dict], cambios: list[dict], extrusor_base: int) -> list[dict]:
+    """Corta los rangos que ya hubiera por las alturas de cambio y pone el extrusor en cada tramo.
+
+    Por debajo del primer cambio queda el extrusor del objeto; los demás ajustes de los rangos
+    que ya había (p. ej. una altura de capa) se conservan en sus tramos.
+    """
+    cambios = sorted(cambios, key=lambda c: float(c["z"]))
+    cortes = sorted({0.0, _ALTURA_TOPE} | {float(c["z"]) for c in cambios}
+                    | {r["min"] for r in existentes} | {r["max"] for r in existentes})
+    salida = []
+    for zmin, zmax in zip(cortes, cortes[1:]):
+        opciones = {}
+        for r in existentes:
+            if r["min"] <= zmin and zmax <= r["max"]:
+                opciones.update(r["opciones"])
+        extrusor = extrusor_base
+        for c in cambios:
+            if float(c["z"]) <= zmin:
+                extrusor = c["extruder"]
+        if opciones or extrusor != extrusor_base:
+            # 0 = el del objeto; así el tramo base sigue al objeto si luego se le cambia.
+            opciones["extruder"] = str(extrusor if extrusor != extrusor_base else 0)
+            salida.append({"min": zmin, "max": zmax, "opciones": opciones})
+    return salida
+
+
+def _escribir_rangos(rangos: dict[str, list[dict]]) -> str:
+    partes = ['<?xml version="1.0" encoding="utf-8"?>\n<objects>\n']
+    for oid, lista in rangos.items():
+        partes.append(f' <object id="{oid}">\n')
+        for r in lista:
+            partes.append(f'  <range min_z="{r["min"]:g}" max_z="{r["max"]:g}">\n')
+            partes += [f'   <option opt_key="{k}">{v}</option>\n' for k, v in r["opciones"].items()]
+            partes.append("  </range>\n")
+        partes.append(" </object>\n")
+    partes.append("</objects>\n")
+    return "".join(partes)
+
+
+# ---------------------------------------------------------------- relieves (HueForge, carteles)
+
+_RE_TRIANGULO = re.compile(r'<triangle\s+v1="(\d+)"\s+v2="(\d+)"\s+v3="(\d+)"')
+_IDENTIDAD = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
+
+
+def _matriz(texto: str | None) -> tuple[float, ...]:
+    if not texto:
+        return _IDENTIDAD
+    nums = tuple(float(x) for x in texto.split())
+    return nums if len(nums) == 12 else _IDENTIDAD
+
+
+def _aplicar(m: tuple[float, ...], p: tuple[float, float, float]) -> tuple[float, float, float]:
+    # 3MF: vector fila por la matriz; los tres últimos números son la traslación.
+    x, y, z = p
+    return (x * m[0] + y * m[3] + z * m[6] + m[9],
+            x * m[1] + y * m[4] + z * m[7] + m[10],
+            x * m[2] + y * m[5] + z * m[8] + m[11])
+
+
+def _solo_traslacion(m: tuple[float, ...]) -> bool:
+    return all(abs(a - b) < 1e-6 for a, b in zip(m[:9], _IDENTIDAD[:9]))
+
+
+def _bloque_objeto(xml: str, oid: str) -> re.Match | None:
+    return re.search(rf'(<object\s[^>]*\bid="{oid}"[^>]*>)(.*?)(</object>)', xml, re.S)
+
+
+def _malla_de(xml: str, oid: str) -> tuple[list, list] | None:
+    m = _bloque_objeto(xml, oid)
+    if not m or "<mesh" not in m.group(2):
+        return None
+    cuerpo = m.group(2)
+    vertices = [(float(a), float(b), float(c)) for a, b, c in _RE_VERTICE.findall(cuerpo)]
+    triangulos = [(int(a), int(b), int(c)) for a, b, c in _RE_TRIANGULO.findall(cuerpo)]
+    return vertices, triangulos
+
+
+def _geometria_objeto(contenido: dict[str, bytes], oid: str) -> dict | None:
+    """Triángulos de un objeto en sus coordenadas propias y en las de la cama.
+
+    Sirve para objetos con malla directa (3MF plano) y para los proyectos de Creality/Bambu,
+    cuyo objeto son componentes que apuntan a mallas en 3D/Objects/*.model.
+    """
+    raiz = contenido["3D/3dmodel.model"].decode("utf-8", "replace")
+    m = _bloque_objeto(raiz, oid)
+    if not m:
+        return None
+    piezas = []  # (vertices, triangulos, matriz del componente)
+    if "<mesh" in m.group(2):
+        malla = _malla_de(raiz, oid)
+        if malla:
+            piezas.append((*malla, _IDENTIDAD))
+    for etiqueta in re.findall(r"<component\s[^>]*/?>", m.group(2)):
+        a = dict(re.findall(r'([\w:]+)="([^"]*)"', etiqueta))
+        ruta = a.get("p:path", "").lstrip("/")
+        xml = contenido.get(ruta, b"").decode("utf-8", "replace") if ruta else raiz
+        malla = _malla_de(xml, a.get("objectid", ""))
+        if malla:
+            piezas.append((*malla, _matriz(a.get("transform"))))
+    if not piezas:
+        return None
+    item = re.search(rf'<item\s[^>]*objectid="{oid}"[^>]*>', raiz)
+    t = re.search(r'transform="([^"]*)"', item.group(0)) if item else None
+    t_item = _matriz(t.group(1) if t else None)
+    locales, cama = [], []
+    for vertices, triangulos, tc in piezas:
+        vl = [_aplicar(tc, p) for p in vertices]
+        vc = [_aplicar(t_item, p) for p in vl]
+        locales += [(vl[a], vl[b], vl[c]) for a, b, c in triangulos]
+        cama += [(vc[a], vc[b], vc[c]) for a, b, c in triangulos]
+    return {"local": locales, "cama": cama, "item": t_item}
+
+
+def _area_xy(t) -> float:
+    """Área proyectada en XY con signo (>0 mira hacia arriba)."""
+    (x0, y0, _), (x1, y1, _), (x2, y2, _) = t
+    return ((x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)) / 2
+
+
+def superficies_por_altura(triangulos: list) -> list[dict]:
+    """Las caras planas que miran hacia arriba, agrupadas por altura: [{"z", "area_mm2"}]."""
+    areas: dict[float, float] = {}
+    for t in triangulos:
+        zs = (t[0][2], t[1][2], t[2][2])
+        if max(zs) - min(zs) < 1e-4:
+            a = _area_xy(t)
+            if a > 0:
+                z = round(zs[0], 2) + 0.0
+                areas[z] = areas.get(z, 0.0) + a
+    return [{"z": z, "area_mm2": round(a, 1)} for z, a in sorted(areas.items())]
+
+
+def altura_de_cambio(superficies: list[dict]) -> float | None:
+    """Para un relieve de dos colores (HueForge, cartel): la cara alta más baja que importe.
+
+    Lo que queda a esa altura o por debajo es el fondo; el color de arriba empieza en la capa
+    siguiente. Si se cambia más arriba, el color de arriba queda como una piel fina y desvaída.
+    """
+    total = sum(s["area_mm2"] for s in superficies)
+    tope = max((s["z"] for s in superficies), default=None)
+    bajas = [s["z"] for s in superficies if s["z"] != tope and s["area_mm2"] >= 0.05 * total]
+    return min(bajas) if bajas else None
+
+
+def _superficies_objeto(contenido: dict[str, bytes], oid: str) -> list[dict] | None:
+    g = _geometria_objeto(contenido, oid)
+    if not g:
+        return None
+    zmin = min(p[2] for t in g["cama"] for p in t)
+    return superficies_por_altura([tuple((x, y, z - zmin) for x, y, z in t) for t in g["cama"]])
+
+
+def analizar_alturas(modelo: str | os.PathLike) -> list[dict]:
+    """Por objeto: sus caras de arriba por altura y dónde cambiar de color en un relieve."""
+    modelo = Path(modelo).resolve()
+    if not modelo.is_file():
+        raise ErrorCrealityPrint(f"{modelo} doesn't exist.")
+    with tempfile.TemporaryDirectory() as tmp:
+        origen = stl_a_3mf(modelo, Path(tmp) / "m.3mf") if modelo.suffix.lower() == ".stl" else modelo
+        with zipfile.ZipFile(origen) as z:
+            contenido = {n: z.read(n) for n in z.namelist()}
+        objetos = objetos_3mf(origen)
+    salida = []
+    for o in objetos:
+        sup = _superficies_objeto(contenido, o["id"])
+        if sup is not None:
+            salida.append({"id": o["id"], "name": o["name"], "top_surfaces": sup,
+                           "suggested_change_z": altura_de_cambio(sup)})
+    return salida
+
+
+def _caja(x0, y0, z0, x1, y1, z1) -> tuple[list, list]:
+    v = [(x, y, z) for x in (x0, x1) for y in (y0, y1) for z in (z0, z1)]
+    caras = [(0, 1, 3), (0, 3, 2), (4, 6, 7), (4, 7, 5), (0, 4, 5), (0, 5, 1),
+             (2, 3, 7), (2, 7, 6), (0, 2, 6), (0, 6, 4), (1, 5, 7), (1, 7, 3)]
+    return v, caras
+
+
+def _xml_malla(oid: int, vertices: list, triangulos: list) -> str:
+    vs = "".join(f'<vertex x="{x:.5f}" y="{y:.5f}" z="{z:.5f}"/>' for x, y, z in vertices)
+    ts = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in triangulos)
+    return (f'<object id="{oid}" type="model"><mesh><vertices>{vs}</vertices>'
+            f'<triangles>{ts}</triangles></mesh></object>')
+
+
+def _ids(xml: str) -> list[int]:
+    return [int(i) for i in re.findall(r'<object\s[^>]*\bid="(\d+)"', xml)]
+
+
+def partes_por_altura(contenido: dict[str, bytes], o: dict, cambios: list[dict]) -> str | None:
+    """Pone el cambio de color por altura como partes, para que la app lo pinte en «Preparar».
+
+    La malla del objeto queda entera con el filamento de arriba y, por cada cambio, se añade
+    un bloque macizo desde la cama hasta esa altura con el filamento de debajo. Los bloques
+    van de arriba abajo porque Creality Print, donde dos partes se solapan, se queda con la
+    que va después. Solo se hace si el objeto apoya en un rectángulo (HueForge, carteles,
+    litofanías): con otra planta el bloque añadiría material. Devuelve un aviso o None.
+    """
+    g = _geometria_objeto(contenido, o["id"])
+    if not g:
+        return f"{o['name']}: couldn't read its mesh; the colour change is a height range only."
+    if not _solo_traslacion(g["item"]):
+        return f"{o['name']}: it's rotated or scaled; the colour change is a height range only."
+    pts = [p for t in g["local"] for p in t]
+    x0, x1 = min(p[0] for p in pts), max(p[0] for p in pts)
+    y0, y1 = min(p[1] for p in pts), max(p[1] for p in pts)
+    z0 = min(p[2] for p in pts)
+    planta = -sum(_area_xy(t) for t in g["local"] if all(abs(p[2] - z0) < 1e-4 for p in t))
+    if planta < 0.98 * (x1 - x0) * (y1 - y0):
+        return (f"{o['name']}: it doesn't sit on a rectangle, so the Prepare view shows one colour "
+                "(it still prints right; Preview shows both).")
+    dz = g["item"][11]  # altura sobre la cama -> coordenadas del objeto
+    cambios = sorted(cambios, key=lambda c: float(c["z"]))
+    base = o["extruder"] or 1
+    debajo = [base] + [c["extruder"] for c in cambios[:-1]]  # filamento bajo cada cambio
+    arriba = cambios[-1]["extruder"]
+    # +0,01: el bloque asoma por encima de las caras del fondo, que están justo a esa altura,
+    # y así la vista no las mezcla; a 0,01 mm no llega ninguna capa.
+    bloques = [(_caja(x0, y0, z0, x1, y1, float(c["z"]) - dz + 0.01), e, float(c["z"]))
+               for c, e in reversed(list(zip(cambios, debajo)))]
+
+    raiz = contenido["3D/3dmodel.model"].decode("utf-8")
+    m = _bloque_objeto(raiz, o["id"])
+    partes, pieza_original = [], None
+    if "<components>" in m.group(2):
+        # Proyecto de Creality/Bambu: los bloques van al fichero de las mallas.
+        primero = re.search(r'<component\s[^>]*p:path="([^"]+)"', m.group(2))
+        if not primero:
+            return f"{o['name']}: unexpected 3MF layout; the colour change is a height range only."
+        ruta = primero.group(1)
+        sub = contenido[ruta.lstrip("/")].decode("utf-8")
+        siguiente = max(_ids(sub) + _ids(raiz)) + 1
+        nuevos, componentes = [], []
+        for (v, t), e, z in bloques:
+            nuevos.append(_xml_malla(siguiente, v, t))
+            componentes.append(f'<component p:path="{ruta}" objectid="{siguiente}" '
+                               'transform="1 0 0 0 1 0 0 0 1 0 0 0"/>')
+            partes.append((siguiente, f"Below {z:g} mm", e))
+            siguiente += 1
+        contenido[ruta.lstrip("/")] = sub.replace("</resources>", "".join(nuevos) + "</resources>", 1).encode()
+        cuerpo = m.group(2).replace("</components>", "".join(componentes) + "</components>", 1)
+    else:
+        # 3MF plano: la malla pasa a un objeto propio y el objeto se vuelve componentes.
+        pieza_original = max(_ids(raiz)) + 1
+        etiqueta = re.sub(r'\bid="\d+"', f'id="{pieza_original}"', m.group(1), count=1)
+        etiqueta = re.sub(r'\s(?:pid|pindex)="[^"]*"', "", etiqueta)
+        nuevos = [etiqueta + m.group(2) + m.group(3)]
+        componentes = [f'<component objectid="{pieza_original}"/>']
+        siguiente = pieza_original + 1
+        for (v, t), e, z in bloques:
+            nuevos.append(_xml_malla(siguiente, v, t))
+            componentes.append(f'<component objectid="{siguiente}"/>')
+            partes.append((siguiente, f"Below {z:g} mm", e))
+            siguiente += 1
+        cuerpo = "<components>" + "".join(componentes) + "</components>"
+        raiz = raiz.replace("</resources>", "".join(nuevos) + "</resources>", 1)
+        m = _bloque_objeto(raiz, o["id"])
+    etiqueta = re.sub(r'\s(?:pid|pindex)="[^"]*"', "", m.group(1))
+    raiz = raiz[:m.start()] + etiqueta + cuerpo + m.group(3) + raiz[m.end():]
+    contenido["3D/3dmodel.model"] = raiz.encode("utf-8")
+
+    # model_settings: las piezas de siempre con el filamento de arriba y los bloques después.
+    config = contenido.get("Metadata/model_settings.config", b"").decode("utf-8") or \
+        '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n</config>\n'
+    config = _poner_extrusor(config, o["id"], o["name"], base)
+    mo = re.search(rf'(<object id="{o["id"]}">)(.*?)(</object>)', config, re.S)
+    cuerpo = mo.group(2).rstrip()
+    if pieza_original is not None and "<part " not in cuerpo:
+        cuerpo += (f'\n    <part id="{pieza_original}" subtype="normal_part">\n'
+                   f'      <metadata key="name" value="{o["name"]}"/>\n    </part>')
+
+    def con_extrusor(p: re.Match) -> str:
+        dentro = re.sub(r'\s*<metadata key="extruder" value="\d+"/>', "", p.group(2)).rstrip()
+        return f'{p.group(1)}{dentro}\n      <metadata key="extruder" value="{arriba}"/>\n    {p.group(3)}'
+
+    cuerpo = re.sub(r"(<part\b[^>]*>)(.*?)(</part>)", con_extrusor, cuerpo, flags=re.S)
+    for pid, nombre, e in partes:
+        cuerpo += (f'\n    <part id="{pid}" subtype="normal_part">\n'
+                   f'      <metadata key="name" value="{nombre}"/>\n'
+                   f'      <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n'
+                   f'      <metadata key="extruder" value="{e}"/>\n    </part>')
+    config = config[:mo.start()] + mo.group(1) + cuerpo + "\n  " + mo.group(3) + config[mo.end():]
+    contenido["Metadata/model_settings.config"] = config.encode("utf-8")
+    return None
+
 
 def preparar_multicolor(
     modelo: str | os.PathLike,
@@ -530,13 +924,17 @@ def preparar_multicolor(
     cambios_altura: list[dict] | None = None,
     salida: str | os.PathLike | None = None,
     cama: tuple[float, float] = (260, 260),
+    partes: bool = True,
 ) -> dict:
     """Prepara un 3MF con los colores que se piden, listo para `laminar`.
 
     - asignar: {nombre o id del objeto: extrusor}. Los extrusores son 1, 2… (T0, T1…) y,
       si se definen `mezclas` al laminar, las mezclas son los siguientes números.
     - cambios_altura: [{"z": 10, "extrusor": 2}] cambia de filamento a esa altura (base de
-      un color y relieve de otro, como en los carteles).
+      un color y relieve de otro, como en los carteles). "z": "auto" la mide en cada objeto:
+      justo encima del fondo de un relieve (HueForge).
+    - partes: además del rango de altura, un bloque con el filamento de abajo para que la
+      vista «Preparar» lo pinte (solo en objetos que apoyan en un rectángulo).
 
     Un STL se convierte antes en 3MF; un 3MF plano se centra en la cama. El original no se toca.
     """
@@ -568,19 +966,55 @@ def preparar_multicolor(
             raise ErrorCrealityPrint(
                 f"There is no object '{clave}'. Objects: " + ", ".join(f"{o['name']} ({o['id']})" for o in objetos))
         config = _poner_extrusor(config, o["id"], o["name"], int(extrusor))
+        o["extruder"] = int(extrusor)
     contenido["Metadata/model_settings.config"] = config.encode("utf-8")
 
     cambios_altura = [{"z": c["z"], "extruder": int(c.get("extruder", c.get("extrusor", 0)))}
                       for c in cambios_altura or []]
+    avisos: list[str] = []
+    por_objeto: dict[str, list[dict]] = {}
     if cambios_altura:
-        capas = []
-        for c in sorted(cambios_altura, key=lambda c: float(c["z"])):
-            capas.append(f'<layer top_z="{float(c["z"]):g}" type="2" extruder="{c["extruder"]}" '
-                         f'color="" extra="" gcode="tool_change"/>')
-        contenido["Metadata/custom_gcode_per_layer.xml"] = (
-            '<?xml version="1.0" encoding="utf-8"?>\n<custom_gcodes_per_layer>\n<plate>\n<plate_info id="1"/>\n'
-            + "\n".join(capas) + '\n<mode value="MultiAsSingle"/>\n</plate>\n</custom_gcodes_per_layer>\n'
-        ).encode("utf-8")
+        if any(c["extruder"] < 1 for c in cambios_altura):
+            raise ErrorCrealityPrint("Extruders start at 1.")
+        for o in objetos:
+            lista = []
+            for c in cambios_altura:
+                z = c["z"]
+                if isinstance(z, str) and z.strip().lower() in ("auto", "automatico", "automático"):
+                    sup = _superficies_objeto(contenido, o["id"]) or []
+                    z = altura_de_cambio(sup)
+                    if z is None:
+                        raise ErrorCrealityPrint(
+                            f"{o['name']}: no low (background) surfaces found for z='auto'; give the "
+                            "height in mm. Top surfaces: " + ", ".join(f"{s['z']} mm" for s in sup))
+                lista.append({"z": float(z), "extruder": c["extruder"]})
+            por_objeto[o["id"]] = lista
+        # El cambio va como modificador de rango de altura (como «Añadir rango de altura» en la
+        # app), no como cambio de herramienta por capa en modo «MultiAsSingle». Con eso se
+        # imprime bien, pero «Preparar» sigue pintando el objeto de un color: por eso, además,
+        # se ponen partes con su filamento cuando la forma lo permite (partes_por_altura).
+        rangos = _leer_rangos(contenido.get("Metadata/layer_config_ranges.xml", b"").decode("utf-8"))
+        for i, o in enumerate(objetos, start=1):
+            rangos[str(i)] = _rangos_con_extrusor(rangos.get(str(i), []), por_objeto[o["id"]],
+                                                  o["extruder"] or 1)
+        if partes:
+            for o in objetos:
+                aviso = partes_por_altura(contenido, o, por_objeto[o["id"]])
+                if aviso:
+                    avisos.append(aviso)
+        xml_rangos = _escribir_rangos(rangos)
+        try:
+            capa = json.loads(contenido.get("Metadata/project_settings.config", b"{}")).get("layer_height")
+        except ValueError:
+            capa = None
+        if capa:  # sin proyecto (un STL), `laminar` pone la del proceso que se use
+            xml_rangos = _rangos_con_capa(xml_rangos, _a_texto(capa))
+        contenido["Metadata/layer_config_ranges.xml"] = xml_rangos.encode("utf-8")
+        # Los cambios de herramienta que trajera el proyecto chocarían con los rangos.
+        xml = contenido.get("Metadata/custom_gcode_per_layer.xml", b"").decode("utf-8")
+        if xml:
+            contenido["Metadata/custom_gcode_per_layer.xml"] = re.sub(
+                r'\s*<layer [^>]*gcode="tool_change"[^>]*/>', "", xml).encode("utf-8")
 
     destino.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as z:
@@ -588,8 +1022,13 @@ def preparar_multicolor(
             z.writestr(n, d)
     objetos = objetos_3mf(destino)
     usados = sorted({o["extruder"] for o in objetos} | {c["extruder"] for c in cambios_altura})
-    return {"file": str(destino), "objects": objetos, "height_changes": cambios_altura,
-            "extruders_used": usados}
+    resultado = {"file": str(destino), "objects": objetos, "extruders_used": usados}
+    if por_objeto:
+        resultado["height_changes"] = [{"object": o["name"], "changes": por_objeto[o["id"]]}
+                                       for o in objetos if o["id"] in por_objeto]
+    if avisos:
+        resultado["warnings"] = avisos
+    return resultado
 
 
 MODOS_MEZCLA = {"layers": 0, "dots": 1, "simple": 2, "capas": 0, "puntos": 1}

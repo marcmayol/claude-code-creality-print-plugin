@@ -63,6 +63,13 @@ alone; then slice that 3MF with one filament per extruder.
   `assign={"Text": 2}`. Extruder 1 = first filament (T0), 2 = second (T1)…
 - **Colour change by height**: `height_changes=[{"z": 10, "extruder": 2}]`. A base in one
   colour and the raised part in another (signs, lettering, colour lithophanes). Works on STLs too.
+  It goes in as a height-range modifier plus, when the object sits on a rectangle (HueForge,
+  signs, lithophanes), a solid block below the change with the lower filament, so the app's
+  Prepare view shows both colours. If `warnings` says it couldn't add the block, it still
+  prints right but Prepare shows one colour: tell the person to check Preview.
+- **HueForge / two-colour reliefs**: use `"z": "auto"` (or look first with `analyze_heights`).
+  The change goes right above the background (the lowest large top surface), not halfway
+  up: otherwise the top colour is a thin, washed-out skin. Use the `0.08mm HueForge` process.
 - **Mixed filaments** (Creality Print 7 virtual filaments): when slicing,
   `mixes=[{"a": 1, "b": 2, "percent_b": 50, "mode": "layers"}]`. With N filaments, mix 1 is
   extruder N+1, and it's assigned to an object like any other: `assign={"Body": 3}`. Modes:
