@@ -183,6 +183,32 @@ def test_meter_perfiles_en_3mf(tmp_path):
     assert ajustes["filament_colour"] == ["#FF0000", "#00FF00"]
     assert ajustes["clave_del_proyecto"] == "se queda"
     assert "inherits" not in ajustes
+    # Sin esto la CLI vuelve a cargar la máquina de la que heredaba el proyecto.
+    assert ajustes["inherits_group"] == ["", "", "", ""]
+    assert ajustes["print_compatible_printers"] == ["M"]
+
+
+def test_meter_perfiles_recoloca_en_una_cama_menor(tmp_path):
+    ruta = _proyecto_creality(tmp_path / "a.3mf")  # pieza en 175,175: centro de una cama de 350
+    with zipfile.ZipFile(ruta, "a") as z:
+        z.writestr("Metadata/project_settings.config", __import__("json").dumps({
+            "printable_area": ["0x0", "350x0", "350x350", "0x350"], "wipe_tower_x": ["320"],
+            "wipe_tower_y": ["300"], "prime_tower_width": "30"}))
+    planos = {"machine": [{"name": "M", "printable_area": ["0x0", "260x0", "260x260", "0x260"]}],
+              "process": [{"name": "P"}], "filament": [{"name": "F1"}]}
+    cpm.meter_perfiles_en_3mf(ruta, tmp_path / "b.3mf", planos)
+    with zipfile.ZipFile(tmp_path / "b.3mf") as z:
+        ajustes = __import__("json").loads(z.read("Metadata/project_settings.config"))
+        modelo = z.read("3D/3dmodel.model").decode()
+    assert 'transform="1 0 0 0 1 0 0 0 1 130 130 10.0"' in modelo
+    assert float(ajustes["wipe_tower_x"][0]) <= 260 - 30 - 5 and float(ajustes["wipe_tower_y"][0]) <= 225
+
+
+def test_recolocar_items_en_otra_placa():
+    # Placa 2 de una cama de 300 (paso 360): x = 360 + 150 -> placa 2 de una de 260 (paso 312).
+    modelo = '<item objectid="2" transform="1 0 0 0 1 0 0 0 1 520 140 1"/>'
+    nuevo = cpm._recolocar_items(modelo, (0, 0, 300, 300), (0, 0, 260, 260))
+    assert 'transform="1 0 0 0 1 0 0 0 1 452 120 1"' in nuevo
 
 
 def _proyecto_creality(ruta, lado=20.0):

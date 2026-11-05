@@ -51,7 +51,7 @@ If you try another model, please open an issue and tell me how it went.
 | `creality_print_info` | Install, version, selected profiles, target printer | no |
 | `list_profiles` | Machine, process or filament profiles (only those for your machine) | no |
 | `get_profile_settings` | Keys and values of a fully resolved profile | no |
-| `list_3mf_objects`, `prepare_multicolor` | Objects in a 3MF; colours per object and by height | no |
+| `list_3mf_objects`, `analyze_heights`, `prepare_multicolor` | Objects in a 3MF, their top surfaces; colours per object and by height | no |
 | `slice` | Slices and checks, mixed filaments included. Returns `ok_to_print`, problems, time, grams, extruders | no |
 | `analyze_gcode` | Checks a local gcode or one stored on the printer | no |
 | `open_in_creality_print` | Opens a file in a Creality Print window to look at it | no |
@@ -86,7 +86,10 @@ Then, in Claude Code: "slice this STL in PETG with 4 walls", "how is the print g
 - **One filament per object**: "the text in black, the base in white". Claude lists the objects
   with `list_3mf_objects` and assigns them with `prepare_multicolor`.
 - **Filament change by height**: "white up to 3 mm, then black". It also works on a
-  single-body STL: the raised part comes out in another colour.
+  single-body STL: the raised part comes out in another colour. If the piece sits on a
+  rectangle, a block with the lower filament is added so the Prepare view shows both colours.
+- **Two-colour HueForge**: `analyze_heights` shows each object's top surfaces and
+  `"z": "auto"` puts the change right above the background, where it belongs.
 - **Creality Print 7 mixed filaments**: virtual filaments that alternate two physical ones,
   layer by layer or dithered, to get a third shade. With N filaments, mix 1 is extruder N+1.
   Every change purges, so it takes much longer and uses more filament.
@@ -151,7 +154,9 @@ Optional environment variables, if you'd rather set things by hand:
   - "Plain" 3MF files (with no Creality data) get centred on the bed and one extruder per
     material, which is what the app would do.
   - Colours: each object's extruder goes in `Metadata/model_settings.config`, height changes
-    in `Metadata/custom_gcode_per_layer.xml`, and mixed filaments in
+    as height-range modifiers in `Metadata/layer_config_ranges.xml` plus, on pieces that sit on
+    a rectangle, a block part with the lower filament (where parts overlap, the later one wins;
+    that's what makes the Prepare view show the colours), and mixed filaments in
     `mixed_filament_definitions` (format from Creality Print 7.2's `MixedFilament.cpp`).
 - `gcode.py`: checks the gcode. It only counts moves inside the layers: the start-up purge and
   the colour-change waste chute belong to the machine.
