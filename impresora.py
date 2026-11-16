@@ -23,6 +23,8 @@ from pathlib import Path
 import httpx
 from websockets.sync.client import connect as ws_connect
 
+import rutas
+
 PUERTO_MOONRAKER = 7125
 PUERTO_WS = 9999
 # Si Moonraker no dice dónde guarda los gcode (/server/files/roots), el de la K2.
@@ -48,8 +50,8 @@ def _cargar_modelos() -> dict[str, tuple[str, tuple[int, int, int]]]:
     ("model": "F021" en una K2) y el que Creality Print guarda en deviceInfo.json.
     """
     modelos = dict(_MODELOS_BASE)
-    base = Path(os.environ.get("APPDATA", "")) / "Creality" / "Creality Print"
-    for lista in sorted(base.glob("*/system/Creality/machineList.json"), reverse=True):
+    listas = [l for base in rutas.carpetas_datos() for l in base.glob("*/system/Creality/machineList.json")]
+    for lista in sorted(listas, key=lambda l: l.parent.parent.parent.name, reverse=True):
         try:
             impresoras = json.loads(lista.read_text(encoding="utf-8"))["printerList"]
         except (OSError, ValueError, KeyError):
@@ -85,9 +87,9 @@ class ErrorImpresora(RuntimeError):
 
 def _hosts_de_creality_print() -> list[tuple[str, str]]:
     """(ip, modelo) de las impresoras que Creality Print tiene guardadas."""
-    base = Path(os.environ.get("APPDATA", "")) / "Creality" / "Creality Print"
     salida = []
-    for f in sorted(base.glob("*/deviceInfo.json"), reverse=True):
+    archivos = [f for base in rutas.carpetas_datos() for f in base.glob("*/deviceInfo.json")]
+    for f in sorted(archivos, key=lambda f: f.parent.name, reverse=True):
         try:
             datos = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):

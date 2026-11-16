@@ -30,7 +30,9 @@ Answer in the person's language; the tools' own texts are in English.
 - If the printer can't be found (first time, or its IP changed), `setup_printer` looks for it
   in Creality Print and on the local network and saves it.
 
-All of this lives on their PC (the `CREALITY.md` files and `%APPDATA%\creality-print-plugin\`),
+All of this lives on their computer (the `CREALITY.md` files and the plugin's config folder:
+`%APPDATA%\creality-print-plugin\` on Windows, `~/Library/Application Support/creality-print-plugin/`
+on macOS, `~/.config/creality-print-plugin/` on Linux),
 never in the plugin's repository.
 
 ## Normal flow

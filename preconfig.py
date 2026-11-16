@@ -3,7 +3,8 @@
 Dos niveles:
 
 - **Global**: `CREALITY.md` junto a la configuración del plugin
-  (%APPDATA%\\creality-print-plugin\\). Vale para todo.
+  (%APPDATA%\\creality-print-plugin\\ en Windows, ~/Library/Application Support/creality-print-plugin/
+  en macOS, ~/.config/creality-print-plugin/ en Linux). Vale para todo.
 - **De proyecto**: un `CREALITY.md` en la carpeta del modelo o en cualquiera de las de
   encima. Vale para lo que haya dentro.
 

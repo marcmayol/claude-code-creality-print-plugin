@@ -68,12 +68,26 @@ entiende Claude, pero te contesta en español.
 
 Requisitos:
 
-- Windows con **Creality Print 7.2** instalado (probado con la 7.2.2.5483).
+- **Creality Print 7.2 o 7.3** instalado (probado con la 7.2.2.5483 y la 7.3.0.6151 en Windows
+  y con la 7.3.1.6378 en macOS). Ábrelo una vez para que cree sus perfiles. Dónde lo busca el plugin:
+
+  | Sistema | Creality Print | Sus datos | La configuración del plugin |
+  |---|---|---|---|
+  | Windows | `C:\Program Files\Creality\Creality Print*\CrealityPrint.exe` (o el registro) | `%APPDATA%\Creality\Creality Print\<versión>` | `%APPDATA%\creality-print-plugin\` |
+  | macOS | `Creality Print.app` en `/Applications` o `~/Applications` | `~/Library/Application Support/Creality/Creality Print/<versión>` | `~/Library/Application Support/creality-print-plugin/` |
+  | Linux | `CrealityPrint*.AppImage` en `~/Applications`, `~/Downloads`, `~/.local/bin` u `/opt`; el Flatpak; o `CrealityPrint` en el PATH | `~/.config/Creality/Creality Print/<versión>` (`$XDG_CONFIG_HOME`; Flatpak: `~/.var/app/io.github.crealityofficial.CrealityPrint/config/…`) | `~/.config/creality-print-plugin/` |
+
+  Si está en otro sitio, define `CREALITY_PRINT_EXE` (el `.exe`, el `.app` o el AppImage).
+- Las miniaturas del gcode de un STL las pinta `stl-thumb`, que solo viene con Creality Print
+  en Windows. En macOS y Linux son opcionales: instala
+  [stl-thumb](https://github.com/unlimitedbacon/stl-thumb) en el PATH para tenerlas; sin él el
+  gcode sale sin miniatura y con un aviso. Los proyectos 3MF usan su propia imagen de placa
+  en todos los sistemas.
 - [uv](https://docs.astral.sh/uv/) en el PATH. El servidor declara sus dependencias dentro
   de `server.py` y uv las instala la primera vez.
 - La impresora en la misma red. La encuentra sola (en Creality Print o escaneando la red).
 
-```powershell
+```sh
 claude plugin marketplace add marcmayol/claude-code-creality-print-plugin
 claude plugin install creality-print@marc-3d
 ```
@@ -95,11 +109,13 @@ impresora?», «¿qué hay en el CFS?», «haz la base blanca y las letras negra
 
 ## Tus datos y tu CREALITY.md
 
-El plugin no lleva nada tuyo dentro: lo que necesita lo averigua y lo guarda en tu PC.
+El plugin no lleva nada tuyo dentro: lo que necesita lo averigua y lo guarda en tu
+ordenador, en la carpeta de configuración del plugin (ver la tabla de arriba; en Windows,
+`%APPDATA%\creality-print-plugin\`).
 
 - **La impresora.** La primera vez, `setup_printer` prueba las que tiene Creality
   Print y, si no responde ninguna, escanea tu red local (puertos 9999 y 7125). Guarda su IP
-  y su modelo en `%APPDATA%\creality-print-plugin\config.json`; el modelo es lo que se usa
+  y su modelo en `config.json` dentro de esa carpeta; el modelo es lo que se usa
   para comprobar la cama. Si un día cambia de IP, se vuelve a llamar.
 - **Tus perfiles y reglas, en `CREALITY.md`.** Le dice al plugin qué usar sin repetirlo cada
   vez: arriba, entre `---`, lo que se aplica solo al laminar; debajo, reglas en texto libre
@@ -119,7 +135,7 @@ slots: {"1": 1D}
 Todo en PLA negro. Las piezas de exterior, con 4 paredes.
 ```
 
-- **Global**, en `%APPDATA%\creality-print-plugin\CREALITY.md`: vale siempre. Su sección
+- **Global**, `CREALITY.md` en la carpeta de configuración del plugin: vale siempre. Su sección
   `## Notes` (o `## Notas`) la rellena `add_note` («mi ABS va a 270 °C», «brim en piezas altas»).
 - **De proyecto**, en la carpeta de los modelos o en cualquiera de las de encima: vale para
   lo que haya dentro.
@@ -147,7 +163,10 @@ Variables opcionales, por si prefieres fijarlo a mano:
   - En la 7.2 las opciones van **con guiones** (`--load-settings`); con guion bajo da
     "Invalid option". Como es una app de ventana, `--help` no escribe en la consola.
   - `--export-3mf` revienta en la 7.2.2, así que las miniaturas las pinta `stl-thumb.exe`
-    (que trae Creality Print) y se insertan a mano.
+    (que trae Creality Print en Windows; en macOS y Linux, el `stl-thumb` del PATH si lo hay)
+    y se insertan a mano.
+- `rutas.py`: dónde guardan las cosas Creality Print y el plugin en Windows, macOS y Linux
+  (sacado de `set_data_dir` e `init_app_config` del código de Creality Print).
   - A los 3MF "planos" (sin datos de Creality) los centra en la cama y les asigna un
     extrusor por material, que es lo que haría la ventana.
   - Colores: el extrusor de cada objeto va en `Metadata/model_settings.config`, los cambios
@@ -164,8 +183,10 @@ Variables opcionales, por si prefieres fijarlo a mano:
 
 ## Tests
 
-```powershell
+```sh
 python -m pytest -q
+# o, sin instalar nada a mano:
+uv run --no-project --with pytest --with "mcp>=1.27,<2" --with httpx --with websockets --with pillow --with pyyaml python -m pytest -q
 ```
 
 Los que necesitan Creality Print o la impresora se saltan si no están. Los de la impresora
@@ -174,6 +195,10 @@ solo leen: ningún test sube, imprime ni pausa nada.
 ## Estado y límites
 
 - Probado con una K2 (base, 260 mm) con un CFS; el resto de modelos, sin probar.
+- En Windows está probado todo, impresora incluida. En macOS (Apple silicon, Creality Print
+  7.3.1) están probados la detección y el laminado por CLI; manejar la impresora desde un Mac
+  usa el mismo código de red, pero no se ha probado. Linux solo lo cubren tests que lo
+  simulan: las rutas salen del código fuente de Creality Print.
 - `start_print` ya ha lanzado impresiones reales en la K2 con el mapeo de ranuras del CFS. El
   protocolo sale del código de Creality Print y del mapeo que la K2 guarda de sus trabajos.
 - Creality Print 7.3 cambia la CLI: pide `--cli` y `--need-gcode-file`, sin el cual lamina, sale

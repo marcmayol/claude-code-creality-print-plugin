@@ -135,7 +135,11 @@ def test_laminar_stl_con_ajustes(tmp_path):
     g = res.gcodes[0]
     assert g["ok_to_print"], g["problems"]
     assert g["printer_model"] == "Creality K2"
-    assert g["thumbnails"] == ["96x96", "300x300"]
+    if CP.stl_thumb:
+        assert g["thumbnails"] == ["96x96", "300x300"]
+    else:  # macOS y Linux sin stl-thumb: sin miniatura, con aviso, pero el gcode sale
+        assert g["thumbnails"] == []
+        assert any("stl-thumb" in a for a in res.avisos)
     assert "cubo.stl_PLA_" in g["file"]
     inf = gcode.analizar(g["file"])
     assert inf.valor("wall_loops") == "3"

@@ -1,6 +1,8 @@
 ---
 # Copy this file as CREALITY.md into your models' folder (it applies to that folder and
-# everything inside) or into %APPDATA%\creality-print-plugin\ (it always applies).
+# everything inside) or into the plugin's config folder (it always applies):
+# %APPDATA%\creality-print-plugin\ on Windows, ~/Library/Application Support/creality-print-plugin/
+# on macOS, ~/.config/creality-print-plugin/ on Linux.
 # Everything is optional: set only what you want to pin down. The CREALITY.md closest to
 # the model wins, and whatever you ask for in the conversation wins over all of them.
 # The values are Creality Print profile and setting names.

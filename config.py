@@ -1,8 +1,9 @@
 """Lo personal de cada instalación: qué impresora es.
 
-Vive fuera del repo, en %APPDATA%\\creality-print-plugin\\config.json (o donde diga
-CREALITY_PLUGIN_CONFIG), y lo rellena el propio plugin buscando la impresora. Las reglas
-y preferencias van aparte, en los CREALITY.md (ver preconfig.py). Nada de esto se publica.
+Vive fuera del repo, en config.json dentro de rutas.carpeta_plugin()
+(%APPDATA%\\creality-print-plugin en Windows, ~/Library/Application Support/creality-print-plugin
+en macOS, ~/.config/creality-print-plugin en Linux) o donde diga CREALITY_PLUGIN_CONFIG, y
+lo rellena el propio plugin buscando la impresora. Las reglas y preferencias van aparte, en los CREALITY.md (ver preconfig.py). Nada de esto se publica.
 """
 from __future__ import annotations
 
@@ -16,12 +17,18 @@ from pathlib import Path
 import httpx
 
 import impresora as imp
+import rutas
 
 
 def ruta() -> Path:
     if os.environ.get("CREALITY_PLUGIN_CONFIG"):
         return Path(os.environ["CREALITY_PLUGIN_CONFIG"])
-    return Path(os.environ.get("APPDATA", Path.home())) / "creality-print-plugin" / "config.json"
+    nueva = rutas.carpeta_plugin() / "config.json"
+    # Hasta la 0.4.2, sin %APPDATA% (macOS, Linux) se guardaba en ~/creality-print-plugin.
+    antigua = Path.home() / "creality-print-plugin" / "config.json"
+    if rutas.sistema() != "windows" and not nueva.exists() and antigua.is_file():
+        return antigua
+    return nueva
 
 
 def leer() -> dict:

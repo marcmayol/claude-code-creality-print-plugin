@@ -67,13 +67,27 @@ anything without asking you first. Claude answers in your language.
 
 Requirements:
 
-- Windows with **Creality Print 7.2** installed (tested with 7.2.2.5483).
+- **Creality Print 7.2 or 7.3** installed (tested with 7.2.2.5483 and 7.3.0.6151 on Windows,
+  7.3.1.6378 on macOS). Open it once so it creates its profiles. Where the plugin looks for it:
+
+  | System | Creality Print | Its data | The plugin's config |
+  |---|---|---|---|
+  | Windows | `C:\Program Files\Creality\Creality Print*\CrealityPrint.exe` (or the registry) | `%APPDATA%\Creality\Creality Print\<version>` | `%APPDATA%\creality-print-plugin\` |
+  | macOS | `Creality Print.app` in `/Applications` or `~/Applications` | `~/Library/Application Support/Creality/Creality Print/<version>` | `~/Library/Application Support/creality-print-plugin/` |
+  | Linux | `CrealityPrint*.AppImage` in `~/Applications`, `~/Downloads`, `~/.local/bin` or `/opt`; the Flatpak; or `CrealityPrint` on the PATH | `~/.config/Creality/Creality Print/<version>` (`$XDG_CONFIG_HOME`; Flatpak: `~/.var/app/io.github.crealityofficial.CrealityPrint/config/…`) | `~/.config/creality-print-plugin/` |
+
+  Anywhere else: set `CREALITY_PRINT_EXE` (the `.exe`, the `.app` or the AppImage).
+- Gcode thumbnails for STL files are rendered with `stl-thumb`, which only ships with Creality
+  Print on Windows. On macOS and Linux they're optional: install
+  [stl-thumb](https://github.com/unlimitedbacon/stl-thumb) on the PATH to get them; without it
+  the gcode comes out without a thumbnail and with a warning. 3MF projects use their own plate
+  image on every system.
 - [uv](https://docs.astral.sh/uv/) on the PATH. The server declares its dependencies inside
   `server.py` and uv installs them the first time.
 - The printer on the same network. The plugin finds it by itself, in Creality Print or by
   scanning the LAN.
 
-```powershell
+```sh
 claude plugin marketplace add marcmayol/claude-code-creality-print-plugin
 claude plugin install creality-print@marc-3d
 ```
@@ -95,11 +109,13 @@ Then, in Claude Code: "slice this STL in PETG with 4 walls", "how is the print g
 
 ## Your data and your CREALITY.md
 
-Nothing of yours ships with the plugin: whatever it needs, it finds out and stores on your PC.
+Nothing of yours ships with the plugin: whatever it needs, it finds out and stores on your
+computer, in the plugin's config folder (see the table above; on Windows,
+`%APPDATA%\creality-print-plugin\`).
 
 - **The printer.** The first time, `setup_printer` tries the printers saved in Creality
   Print and, if none answers, scans your LAN (ports 9999 and 7125). It stores the IP and model
-  in `%APPDATA%\creality-print-plugin\config.json`; the model is what the bed check uses. If
+  in `config.json` in that folder; the model is what the bed check uses. If
   the IP changes one day, run it again.
 - **Your profiles and rules, in `CREALITY.md`.** It tells the plugin what to use so you don't
   have to repeat it: the YAML block between `---` is applied automatically when slicing, and
@@ -120,7 +136,7 @@ slots: {"1": 1D}
 Everything in black PLA. Outdoor parts get 4 walls.
 ```
 
-- **Global**, in `%APPDATA%\creality-print-plugin\CREALITY.md`: always applies. Its `## Notes`
+- **Global**, `CREALITY.md` in the plugin's config folder: always applies. Its `## Notes`
   section is filled in by `add_note` ("my ABS prints at 270 °C", "brim on tall parts").
 - **Per project**, in the models' folder or any folder above it: applies to everything inside.
 - The file closest to the model wins, and whatever you ask for in the conversation wins over
@@ -147,7 +163,10 @@ Optional environment variables, if you'd rather set things by hand:
   - In 7.2 the options use **dashes** (`--load-settings`); with underscores you get
     "Invalid option". Since it's a GUI app, `--help` prints nothing to the console.
   - `--export-3mf` crashes in 7.2.2, so thumbnails are rendered with `stl-thumb.exe` (shipped
-    with Creality Print) and inserted by hand.
+    with Creality Print on Windows; on macOS and Linux, `stl-thumb` from the PATH if there is
+    one) and inserted by hand.
+- `rutas.py`: where Creality Print and the plugin keep things on Windows, macOS and Linux
+  (taken from Creality Print's `set_data_dir` and `init_app_config`).
   - "Plain" 3MF files (with no Creality data) get centred on the bed and one extruder per
     material, which is what the app would do.
   - Colours: each object's extruder goes in `Metadata/model_settings.config`, height changes
@@ -164,8 +183,10 @@ Optional environment variables, if you'd rather set things by hand:
 
 ## Tests
 
-```powershell
+```sh
 python -m pytest -q
+# or, without installing anything by hand:
+uv run --no-project --with pytest --with "mcp>=1.27,<2" --with httpx --with websockets --with pillow --with pyyaml python -m pytest -q
 ```
 
 Tests that need Creality Print or the printer are skipped when they aren't available. The
@@ -174,6 +195,10 @@ printer tests only read: no test uploads, prints or pauses anything.
 ## Status and limits
 
 - Tested on a K2 (base model, 260 mm) with one CFS; other models are untested.
+- Windows is where everything has been tested, printer included. On macOS (Apple silicon,
+  Creality Print 7.3.1) the detection and the CLI slicing are tested; driving the printer from
+  a Mac uses the same network code but hasn't been tried. Linux is only covered by tests
+  that simulate it: the paths come from Creality Print's source code.
 - `start_print` has started real prints on the K2 with a CFS slot mapping. The protocol comes
   from Creality Print's code and from the slot mapping the K2 stores for its jobs.
 - Creality Print 7.3 changes the CLI: it needs `--cli`, and `--need-gcode-file`, without which it

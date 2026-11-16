@@ -1,6 +1,8 @@
 ---
 # Copia este archivo como CREALITY.md en la carpeta de tus modelos (vale para ella y
-# todo lo que tenga dentro) o en %APPDATA%\creality-print-plugin\ (vale siempre).
+# todo lo que tenga dentro) o en la carpeta de configuración del plugin (vale siempre):
+# %APPDATA%\creality-print-plugin\ en Windows, ~/Library/Application Support/creality-print-plugin/
+# en macOS, ~/.config/creality-print-plugin/ en Linux.
 # Todo es opcional: pon solo lo que quieras fijar. Manda el CREALITY.md más cercano
 # al modelo, y lo que pidas en la conversación manda sobre todos.
 

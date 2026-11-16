@@ -7,7 +7,8 @@ tres manías comprobadas en la 7.2.2:
   "Invalid option".
 - `--export-3mf` revienta al pintar las miniaturas, así que no se usa: las
   miniaturas del gcode las pone este módulo con `stl-thumb.exe`, que viene con
-  Creality Print.
+  Creality Print en Windows. En macOS y Linux no viene: se usa `stl-thumb` si está
+  en el PATH y, si no, el gcode sale sin miniatura (con un aviso).
 - Es una aplicación de ventana: no escribe nada útil por consola. Lo que pasa se
   sabe por el código de salida, `--logfile` y los ficheros que deja.
 
@@ -21,6 +22,7 @@ import difflib
 import io
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -32,6 +34,7 @@ from functools import cached_property
 from pathlib import Path
 
 import gcode
+import rutas
 
 TIPOS = ("machine", "process", "filament")
 SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -54,15 +57,60 @@ def leer_conf(ruta: Path) -> dict:
     return json.loads(texto[:corte] if corte > 0 else texto)
 
 
+def _app_mac(exe: Path) -> Path | None:
+    """El .app que contiene `exe` (…/Creality Print.app/Contents/MacOS/CrealityPrint)."""
+    app = exe.parent.parent.parent
+    return app if app.suffix == ".app" and exe.parent.name == "MacOS" else None
+
+
+def version_exe(exe: Path) -> str:
+    """La versión que se ve desde fuera: Info.plist en macOS, si no el nombre de la carpeta o del archivo."""
+    app = _app_mac(exe)
+    if app:
+        try:
+            with open(app / "Contents" / "Info.plist", "rb") as f:
+                v = plistlib.load(f).get("CFBundleShortVersionString", "")
+            if re.search(r"\d", v):
+                return v
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            pass
+    for texto in (exe.name, exe.parent.name):
+        m = re.search(r"\d+(\.\d+)+", texto)
+        if m:
+            return m.group(0)
+    return "0"
+
+
 def _buscar_exe() -> Path:
     if os.environ.get("CREALITY_PRINT_EXE"):
-        exe = Path(os.environ["CREALITY_PRINT_EXE"])
+        exe = Path(os.environ["CREALITY_PRINT_EXE"]).expanduser()
+        if exe.is_dir() and exe.suffix == ".app":  # en macOS vale también el .app
+            exe = exe / "Contents" / "MacOS" / "CrealityPrint"
         if exe.is_file():
             return exe
         raise ErrorCrealityPrint(f"CREALITY_PRINT_EXE points to {exe}, which doesn't exist.")
+    candidatos = rutas.candidatos_exe()
+    if rutas.sistema() == "windows":
+        candidatos += _exes_del_registro()
+    if not candidatos:
+        raise ErrorCrealityPrint(_sin_creality_print())
+    return max(dict.fromkeys(candidatos), key=lambda p: _version_tupla(version_exe(p)))
+
+
+def _sin_creality_print() -> str:
+    s = rutas.sistema()
+    if s == "mac":
+        donde = "Install it in /Applications (or ~/Applications) or set CREALITY_PRINT_EXE to the .app"
+    elif s == "linux":
+        donde = ("Put the AppImage in ~/Applications, install the Flatpak or set CREALITY_PRINT_EXE "
+                 "to the AppImage")
+    else:
+        donde = "Install it or set CREALITY_PRINT_EXE to CrealityPrint.exe"
+    return f"Can't find Creality Print. {donde}."
+
+
+def _exes_del_registro() -> list[Path]:
     candidatos: list[Path] = []
-    for base in {os.environ.get("ProgramFiles", r"C:\Program Files"), r"C:\Program Files"}:
-        candidatos += Path(base, "Creality").glob("Creality Print*/CrealityPrint.exe")
     try:
         import winreg
 
@@ -86,20 +134,17 @@ def _buscar_exe() -> Path:
                         candidatos.append(exe)
     except ImportError:
         pass
-    if not candidatos:
-        raise ErrorCrealityPrint(
-            "No encuentro Creality Print. Instálalo o define CREALITY_PRINT_EXE con la ruta a CrealityPrint.exe."
-        )
-    return max(set(candidatos), key=lambda p: _version_tupla(p.parent.name))
+    return candidatos
 
 
 def _buscar_datos() -> Path:
     if os.environ.get("CREALITY_PRINT_DATA"):
-        return Path(os.environ["CREALITY_PRINT_DATA"])
-    base = Path(os.environ.get("APPDATA", "")) / "Creality" / "Creality Print"
-    carpetas = [d for d in base.glob("*") if (d / "Creality.conf").is_file()]
+        return Path(os.environ["CREALITY_PRINT_DATA"]).expanduser()
+    bases = rutas.carpetas_datos()
+    carpetas = [d for base in bases for d in base.glob("*") if (d / "Creality.conf").is_file()]
     if not carpetas:
-        raise ErrorCrealityPrint(f"Can't find Creality Print's data in {base}. Has it ever been opened?")
+        donde = " or ".join(str(b) for b in bases)
+        raise ErrorCrealityPrint(f"Can't find Creality Print's data in {donde}. Has it ever been opened?")
     return max(carpetas, key=lambda d: _version_tupla(d.name))
 
 
@@ -122,8 +167,7 @@ class CrealityPrint:
         try:
             return self.conf["app"]["version"]
         except (KeyError, OSError, ValueError):
-            m = re.search(r"\d+(\.\d+)+", self.exe.parent.name)
-            return m.group(0) if m else "0"
+            return version_exe(self.exe)
 
     @property
     def prefijo_cli(self) -> list[str]:
@@ -132,7 +176,11 @@ class CrealityPrint:
     @property
     def dir_sistema(self) -> Path:
         d = self.datos / "system" / "Creality"
-        return d if d.is_dir() else self.exe.parent / "resources" / "profiles" / "Creality"
+        if d.is_dir():
+            return d
+        # Los que trae la instalación: resources/ junto al .exe; en macOS, Contents/Resources.
+        app = _app_mac(self.exe)
+        return (app / "Contents" / "Resources" if app else self.exe.parent / "resources") / "profiles" / "Creality"
 
     @property
     def dirs_usuario(self) -> list[Path]:
@@ -148,8 +196,12 @@ class CrealityPrint:
 
     @property
     def stl_thumb(self) -> Path | None:
-        exe = self.exe.parent / "stl-thumb.exe"
-        return exe if exe.is_file() else None
+        """El renderizador de miniaturas: el que trae Creality Print en Windows o uno del PATH."""
+        for exe in (self.exe.parent / "stl-thumb.exe", self.exe.parent / "stl-thumb"):
+            if exe.is_file():
+                return exe
+        del_path = shutil.which("stl-thumb")
+        return Path(del_path) if del_path else None
 
     def info(self) -> dict:
         return {
@@ -242,10 +294,14 @@ class CrealityPrint:
 
 
 def _proceso_abierto() -> bool:
+    nombre = rutas.nombre_proceso()
     try:
-        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq CrealityPrint.exe", "/NH"],
-                           capture_output=True, text=True, timeout=10, creationflags=SIN_VENTANA)
-        return "CrealityPrint.exe" in r.stdout
+        if rutas.sistema() == "windows":
+            r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {nombre}", "/NH"],
+                               capture_output=True, text=True, timeout=10, creationflags=SIN_VENTANA)
+            return nombre in r.stdout
+        r = subprocess.run(["pgrep", "-x", nombre], capture_output=True, text=True, timeout=10)
+        return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -854,6 +910,9 @@ def laminar(
             if base:
                 gcode.insertar_miniaturas(g, [(w, h, _png_escalado(base, w, h)) for w, h in _tamanos(maquina_plana)])
                 inf = gcode.analizar(g, modelo_esperado, cama)
+            elif cp.stl_thumb is None and modelo.suffix.lower() != ".3mf":
+                res.avisos.append(f"Plate {n_placa}: no thumbnail (stl-thumb isn't installed; "
+                                  "it only comes with Creality Print on Windows).")
             else:
                 res.avisos.append(f"Plate {n_placa}: couldn't render the thumbnail.")
         # El material del nombre es el que usa esta placa, no el primero del proyecto.
@@ -920,6 +979,16 @@ def _motivo_error(log: Path) -> str | None:
 
 # ---------------------------------------------------------------- abrir en la ventana
 
+def _comando_abrir(exe: Path, ruta: Path, en_ventana_abierta: bool) -> list[str]:
+    """En macOS una app se abre con `open`: -n para otra ventana, sin -n va a la que ya está."""
+    app = _app_mac(exe) if rutas.sistema() == "mac" else None
+    if app:
+        if en_ventana_abierta:
+            return ["open", "-a", str(app), str(ruta)]
+        return ["open", "-n", "-a", str(app), "--args", str(ruta)]
+    return [str(exe), *(["--single-instance"] if en_ventana_abierta else []), str(ruta)]
+
+
 def abrir(cp: CrealityPrint, ruta: str | os.PathLike, en_ventana_abierta: bool = False) -> str:
     """Abre un modelo, proyecto o gcode en Creality Print para revisarlo a ojo.
 
@@ -929,11 +998,12 @@ def abrir(cp: CrealityPrint, ruta: str | os.PathLike, en_ventana_abierta: bool =
     ruta = Path(ruta).resolve()
     if not ruta.is_file():
         raise ErrorCrealityPrint(f"{ruta} doesn't exist.")
-    cmd = [str(cp.exe)]
-    if en_ventana_abierta:
-        cmd.append("--single-instance")
-    cmd.append(str(ruta))
-    flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    subprocess.Popen(cmd, creationflags=flags, close_fds=True,
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cmd = _comando_abrir(cp.exe, ruta, en_ventana_abierta)
+    if rutas.sistema() == "windows":
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        extra = {"creationflags": flags}
+    else:
+        extra = {"start_new_session": True}
+    subprocess.Popen(cmd, close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, **extra)
     return "in the open window" if en_ventana_abierta else "in a new window"
